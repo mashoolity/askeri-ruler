@@ -68,9 +68,11 @@ $assets = Join-Path $out 'assets'
 if (-not $SkipBuild) {
     Write-Host '== cargo build --release'
     Invoke-Native 'cargo' @('build', '--release')
-    Write-Host '== generating logos'
-    Invoke-Native 'cargo' @('run', '--release', '--quiet', '--example', 'gen_assets', '--', $assets) | Out-Null
 }
+# Always (re)generate the logos: -SkipBuild only skips compiling the app, and a
+# fresh checkout (e.g. CI) has no assets yet.
+Write-Host '== generating logos'
+Invoke-Native 'cargo' @('run', '--release', '--quiet', '--example', 'gen_assets', '--', $assets) | Out-Null
 
 Write-Host "== staging $version"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }

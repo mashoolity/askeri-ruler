@@ -1,6 +1,6 @@
 [package]
 name = "askeri-ruller"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "On-screen 1px rotatable guide line for Windows"
 
