@@ -1,0 +1,8 @@
+{
+  "_comment": "Package identity. For the Microsoft Store, replace IdentityName, Publisher and PublisherDisplayName with the values from Partner Center > your app > Product identity. The values below are for local test installs only.",
+  "IdentityName": "AskeriRuller.Dev",
+  "Publisher": "CN=AskeriRullerDev",
+  "PublisherDisplayName": "Askeri Ruler (dev)",
+  "DisplayName": "Askeri Ruler",
+  "Description": "On-screen guide line with a rotatable pivot for precise visual measurements."
+}

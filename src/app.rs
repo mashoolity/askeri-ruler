@@ -347,8 +347,8 @@ impl App {
             Some(tray::CMD_CLEAR) => self.clear_all(),
             Some(tray::CMD_SETTINGS) => self.open_settings(),
             Some(tray::CMD_AUTOSTART) => {
-                if !autostart::set_enabled(!auto) {
-                    crate::message_box("Could not change the Start with Windows setting.");
+                if let Err(msg) = autostart::set_enabled(!auto) {
+                    crate::message_box(&msg);
                 }
             }
             Some(tray::CMD_EXIT) => {
@@ -418,8 +418,10 @@ impl App {
             ));
             return;
         }
-        if auto != autostart::is_enabled() && !autostart::set_enabled(auto) {
-            self.settings_error("Could not change the Start with Windows setting.");
+        if auto != autostart::is_enabled() {
+            if let Err(msg) = autostart::set_enabled(auto) {
+                self.settings_error(&msg);
+            }
         }
         if let Err(e) = s.save() {
             self.settings_error(&format!("Settings were applied but could not be saved:\n{e}"));
