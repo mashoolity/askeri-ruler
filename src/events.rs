@@ -31,9 +31,15 @@ pub enum Event {
     EscapeReleased,
     /// Tray icon right-clicked.
     TrayMenu,
+    /// Tray icon double-clicked.
+    TrayDoubleClick,
+    /// A button in the settings window was clicked (control id).
+    SettingsCommand(u16),
+    /// The settings window moved to a monitor with a different DPI.
+    SettingsDpiChanged(u32),
     /// Explorer restarted, the tray icon must be re-added.
     TaskbarCreated,
-    /// Monitor layout or resolution changed.
+    /// Monitor layout or resolution changed (debounced).
     DisplayChanged,
 }
 

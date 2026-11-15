@@ -2,10 +2,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod autostart;
 mod events;
 mod hook;
 mod overlay;
 mod raster;
+mod settings;
+mod settings_ui;
 mod tray;
 mod util;
 
@@ -14,20 +17,20 @@ use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows_sys::Win32::Foundation::*;
+use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::CreateMutexW;
+use windows_sys::Win32::UI::Controls::*;
 use windows_sys::Win32::UI::HiDpi::*;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::Input::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use events::{push, Event};
 use util::wide;
 
-const HOTKEY_ID: i32 = 1;
-const HOTKEY_MODS: HOT_KEY_MODIFIERS = MOD_CONTROL | MOD_SHIFT;
-const HOTKEY_VK: u32 = b'X' as u32;
-const HOTKEY_NAME: &str = "Ctrl+Shift+X";
+/// Timer used to debounce bursts of WM_DISPLAYCHANGE.
+const TIMER_DISPLAY: usize = 1;
+const DISPLAY_SETTLE_MS: u32 = 600;
 
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
@@ -42,6 +45,7 @@ pub fn reset_raw_abs() {
 
 fn main() {
     unsafe {
+        // Also declared in the manifest; this is a fallback.
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
         // Single instance. The handle is intentionally kept open until exit.
@@ -52,12 +56,27 @@ fn main() {
             return;
         }
 
+        let icc = INITCOMMONCONTROLSEX {
+            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_STANDARD_CLASSES | ICC_UPDOWN_CLASS | ICC_HOTKEY_CLASS,
+        };
+        InitCommonControlsEx(&icc);
+
         let hinstance = GetModuleHandleW(null());
+        let icon = LoadIconW(hinstance, tray::ICON_ID as usize as *const u16);
 
         let main_class = wide("AskeriRullerMain");
         let overlay_class = wide("AskeriRullerOverlay");
-        register_class(hinstance, &main_class, main_wndproc);
-        register_class(hinstance, &overlay_class, overlay::overlay_wndproc);
+        let settings_class = wide("AskeriRullerSettings");
+        register_class(hinstance, &main_class, main_wndproc, null_mut(), null_mut());
+        register_class(hinstance, &overlay_class, overlay::overlay_wndproc, null_mut(), null_mut());
+        register_class(
+            hinstance,
+            &settings_class,
+            settings_ui::settings_wndproc,
+            icon,
+            (COLOR_BTNFACE + 1) as usize as HBRUSH,
+        );
 
         // Hidden top-level window: receives the hotkey, raw input, tray
         // callbacks and display-change broadcasts.
@@ -83,17 +102,9 @@ fn main() {
 
         TASKBAR_CREATED.store(RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()), Ordering::Relaxed);
 
-        if RegisterHotKey(main_hwnd, HOTKEY_ID, HOTKEY_MODS | MOD_NOREPEAT, HOTKEY_VK) == 0 {
-            message_box(&format!(
-                "The hotkey {HOTKEY_NAME} is already used by another app.\n\
-                 You can still create lines from the tray icon menu."
-            ));
-        }
-
-        let mut app = app::App::new(hinstance, main_hwnd, overlay_class);
+        let mut app = app::App::new(hinstance, main_hwnd, overlay_class, settings_class);
         run_loop(&mut app);
 
-        UnregisterHotKey(main_hwnd, HOTKEY_ID);
         drop(app);
         DestroyWindow(main_hwnd);
     }
@@ -108,6 +119,11 @@ unsafe fn run_loop(app: &mut app::App) {
         while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
             if msg.message == WM_QUIT {
                 return;
+            }
+            // Tab / Enter / Esc navigation in the settings window.
+            let dlg = settings_ui::current_hwnd();
+            if !dlg.is_null() && IsDialogMessageW(dlg, &msg) != 0 {
+                continue;
             }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -125,7 +141,13 @@ unsafe fn run_loop(app: &mut app::App) {
     }
 }
 
-unsafe fn register_class(hinstance: HINSTANCE, name: &[u16], proc: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT) {
+unsafe fn register_class(
+    hinstance: HINSTANCE,
+    name: &[u16],
+    proc: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT,
+    icon: HICON,
+    background: HBRUSH,
+) {
     let wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
         style: 0,
@@ -133,19 +155,19 @@ unsafe fn register_class(hinstance: HINSTANCE, name: &[u16], proc: unsafe extern
         cbClsExtra: 0,
         cbWndExtra: 0,
         hInstance: hinstance,
-        hIcon: null_mut(),
-        hCursor: null_mut(),
-        hbrBackground: null_mut(),
+        hIcon: icon,
+        hCursor: if background.is_null() { null_mut() } else { LoadCursorW(null_mut(), IDC_ARROW) },
+        hbrBackground: background,
         lpszMenuName: null(),
         lpszClassName: name.as_ptr(),
-        hIconSm: null_mut(),
+        hIconSm: icon,
     };
     RegisterClassExW(&wc);
 }
 
 unsafe extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
-        WM_HOTKEY if wparam as i32 == HOTKEY_ID => {
+        WM_HOTKEY if wparam as i32 == app::HOTKEY_ID => {
             push(Event::Hotkey);
             0
         }
@@ -154,13 +176,20 @@ unsafe extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         tray::WM_TRAY => {
-            let m = (lparam as u32) & 0xFFFF;
-            if m == WM_RBUTTONUP || m == WM_CONTEXTMENU {
-                push(Event::TrayMenu);
+            match (lparam as u32) & 0xFFFF {
+                WM_RBUTTONUP | WM_CONTEXTMENU => push(Event::TrayMenu),
+                WM_LBUTTONDBLCLK => push(Event::TrayDoubleClick),
+                _ => {}
             }
             0
         }
         WM_DISPLAYCHANGE => {
+            // Windows often sends several of these while a change settles.
+            SetTimer(hwnd, TIMER_DISPLAY, DISPLAY_SETTLE_MS, None);
+            0
+        }
+        WM_TIMER if wparam == TIMER_DISPLAY => {
+            KillTimer(hwnd, TIMER_DISPLAY);
             push(Event::DisplayChanged);
             0
         }
@@ -201,7 +230,7 @@ unsafe fn read_raw_mouse(h: HRAWINPUT) {
     }
 }
 
-fn message_box(text: &str) {
+pub fn message_box(text: &str) {
     let text = wide(text);
     let caption = wide("Askeri Ruler");
     unsafe {

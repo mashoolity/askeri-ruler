@@ -14,18 +14,16 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::Input::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
+use crate::autostart;
 use crate::events::Event;
 use crate::hook::{self, KeyboardHook};
 use crate::overlay::{LineSpec, Overlay};
 use crate::raster::normalize_angle;
+use crate::settings::{Settings, FINE_DIVISOR};
+use crate::settings_ui::{self, SettingsWindow};
 use crate::tray::{self, Tray};
 
-/// Rotation speed in degrees per pixel of vertical mouse movement.
-const DEG_PER_PX: f64 = 0.1;
-/// Rotation speed while Shift is held.
-const DEG_PER_PX_FINE: f64 = 0.02;
-/// Snap step while Ctrl is held.
-const SNAP_DEG: f64 = 15.0;
+pub const HOTKEY_ID: i32 = 1;
 
 #[derive(Clone, Copy)]
 struct Line {
@@ -46,33 +44,60 @@ struct Active {
     raw_angle: f64,
 }
 
+#[derive(Clone)]
+struct Monitor {
+    name: String,
+    rect: RECT,
+}
+
 pub struct App {
     hinstance: HINSTANCE,
     main_hwnd: HWND,
     overlay_class: Vec<u16>,
+    settings_class: Vec<u16>,
+    settings: Settings,
+    hotkey_registered: bool,
+    /// Monitors the current overlays were created for (same order).
+    monitors: Vec<Monitor>,
     overlays: Vec<Overlay>,
     lines: Vec<Line>,
     active: Option<Active>,
     hook: Option<KeyboardHook>,
     tray: Tray,
+    settings_ui: Option<SettingsWindow>,
     dirty: bool,
     pub quit: bool,
 }
 
 impl App {
-    pub fn new(hinstance: HINSTANCE, main_hwnd: HWND, overlay_class: Vec<u16>) -> Self {
-        App {
+    pub fn new(hinstance: HINSTANCE, main_hwnd: HWND, overlay_class: Vec<u16>, settings_class: Vec<u16>) -> Self {
+        let settings = Settings::load();
+        let tray = Tray::new(main_hwnd, hinstance, &tip(&settings));
+        let mut app = App {
             hinstance,
             main_hwnd,
             overlay_class,
+            settings_class,
+            settings,
+            hotkey_registered: false,
+            monitors: Vec::new(),
             overlays: Vec::new(),
             lines: Vec::new(),
             active: None,
             hook: None,
-            tray: Tray::new(main_hwnd),
+            tray,
+            settings_ui: None,
             dirty: false,
             quit: false,
+        };
+        if !app.register_hotkey(&settings) {
+            crate::message_box(&format!(
+                "The hotkey {} is already used by another app.\n\
+                 Choose a different one in Settings (double-click the tray icon).",
+                settings.hotkey_name()
+            ));
         }
+        app
     }
 
     pub fn handle(&mut self, e: Event) {
@@ -103,10 +128,56 @@ impl App {
             Event::EscapePressed => self.clear_all(),
             Event::EscapeReleased => self.update_hook(),
             Event::TrayMenu => self.tray_menu(),
-            Event::TaskbarCreated => self.tray.add(),
-            Event::DisplayChanged => {
-                // Monitor geometry changed; overlays no longer match it.
-                self.clear_all();
+            Event::TrayDoubleClick => self.open_settings(),
+            Event::TaskbarCreated => self.tray.add(&tip(&self.settings)),
+            Event::DisplayChanged => self.display_changed(),
+            Event::SettingsCommand(id) => self.settings_command(id),
+            Event::SettingsDpiChanged(dpi) => {
+                if let Some(w) = &mut self.settings_ui {
+                    w.relayout(dpi);
+                }
+            }
+        }
+    }
+
+    // ---- hotkey -------------------------------------------------------
+
+    fn register_hotkey(&mut self, s: &Settings) -> bool {
+        self.unregister_hotkey();
+        let ok = unsafe { RegisterHotKey(self.main_hwnd, HOTKEY_ID, s.hotkey_mods | MOD_NOREPEAT, s.hotkey_vk) } != 0;
+        self.hotkey_registered = ok;
+        ok
+    }
+
+    fn unregister_hotkey(&mut self) {
+        if self.hotkey_registered {
+            unsafe {
+                UnregisterHotKey(self.main_hwnd, HOTKEY_ID);
+            }
+            self.hotkey_registered = false;
+        }
+    }
+
+    // ---- lines --------------------------------------------------------
+
+    fn ensure_overlays(&mut self, interactive: bool) {
+        if self.overlays.is_empty() {
+            self.monitors = monitor_list();
+            for m in &self.monitors {
+                match Overlay::new(self.overlay_class.as_ptr(), self.hinstance, m.rect, interactive) {
+                    Some(ov) => self.overlays.push(ov),
+                    None => {
+                        // Keep monitors and overlays index-aligned.
+                        self.overlays.clear();
+                        self.monitors.clear();
+                        return;
+                    }
+                }
+            }
+        } else {
+            for ov in &mut self.overlays {
+                ov.set_interactive(interactive);
+                ov.bring_to_top();
             }
         }
     }
@@ -115,17 +186,7 @@ impl App {
         if self.active.is_some() {
             return;
         }
-        if self.overlays.is_empty() {
-            for rect in monitor_rects() {
-                if let Some(ov) = Overlay::new(self.overlay_class.as_ptr(), self.hinstance, rect, true) {
-                    self.overlays.push(ov);
-                }
-            }
-        } else {
-            for ov in &mut self.overlays {
-                ov.set_interactive(true);
-            }
-        }
+        self.ensure_overlays(true);
         let p = cursor_pos();
         self.active = Some(Active {
             line: Line { px: p.x as f64, py: p.y as f64, angle: 0.0, cross: true },
@@ -174,12 +235,13 @@ impl App {
         if !a.rotating || dy == 0 {
             return;
         }
-        let fine = key_down(VK_SHIFT);
-        let snap = key_down(VK_CONTROL);
-        let step = if fine { DEG_PER_PX_FINE } else { DEG_PER_PX };
-        a.raw_angle = normalize_angle(a.raw_angle + (dy as f64 * step).to_radians());
-        a.line.angle = if snap {
-            let s = SNAP_DEG.to_radians();
+        let mut deg_per_px = self.settings.rotation_speed as f64 / 100.0;
+        if key_down(VK_SHIFT) {
+            deg_per_px /= FINE_DIVISOR;
+        }
+        a.raw_angle = normalize_angle(a.raw_angle + (dy as f64 * deg_per_px).to_radians());
+        a.line.angle = if key_down(VK_CONTROL) {
+            let s = (self.settings.snap_step as f64).to_radians();
             normalize_angle((a.raw_angle / s).round() * s)
         } else {
             a.raw_angle
@@ -220,7 +282,48 @@ impl App {
         self.active = None;
         self.lines.clear();
         self.overlays.clear(); // destroys the windows and frees the bitmaps
+        self.monitors.clear();
         self.dirty = false;
+        self.update_hook();
+    }
+
+    /// Monitors were added, removed, moved or changed resolution. Keep each
+    /// locked line on its monitor (scaled to the new size) and rebuild the
+    /// overlays; lines whose monitor is gone are removed.
+    fn display_changed(&mut self) {
+        if self.overlays.is_empty() {
+            return;
+        }
+        if matches!(&self.active, Some(a) if a.rotating) {
+            self.lock();
+        }
+        let old = std::mem::take(&mut self.monitors);
+        let new = monitor_list();
+        self.lines.retain_mut(|l| {
+            let Some(om) = old.iter().find(|m| contains(&m.rect, l.px as i32, l.py as i32)) else {
+                return false;
+            };
+            let Some(nm) = new.iter().find(|m| m.name == om.name) else { return false };
+            let (or, nr) = (om.rect, nm.rect);
+            let sx = (nr.right - nr.left) as f64 / (or.right - or.left).max(1) as f64;
+            let sy = (nr.bottom - nr.top) as f64 / (or.bottom - or.top).max(1) as f64;
+            l.px = (nr.left as f64 + (l.px - or.left as f64) * sx).floor();
+            l.py = (nr.top as f64 + (l.py - or.top as f64) * sy).floor();
+            true
+        });
+        self.overlays.clear();
+        if self.lines.is_empty() && self.active.is_none() {
+            self.update_hook();
+            return;
+        }
+        let placing = self.active.is_some();
+        self.ensure_overlays(placing);
+        if let Some(a) = &mut self.active {
+            let p = cursor_pos();
+            a.line.px = p.x as f64;
+            a.line.py = p.y as f64;
+        }
+        self.dirty = true;
         self.update_hook();
     }
 
@@ -234,24 +337,107 @@ impl App {
         }
     }
 
+    // ---- tray & settings ---------------------------------------------
+
     fn tray_menu(&mut self) {
         let has_lines = !self.lines.is_empty() || self.active.is_some();
-        match self.tray.show_menu(has_lines) {
+        let auto = autostart::is_enabled();
+        match self.tray.show_menu(has_lines, &self.settings.hotkey_name(), auto) {
             Some(tray::CMD_NEW_LINE) => self.start_line(),
             Some(tray::CMD_CLEAR) => self.clear_all(),
+            Some(tray::CMD_SETTINGS) => self.open_settings(),
+            Some(tray::CMD_AUTOSTART) => {
+                if !autostart::set_enabled(!auto) {
+                    crate::message_box("Could not change the Start with Windows setting.");
+                }
+            }
             Some(tray::CMD_EXIT) => {
                 self.clear_all();
+                self.settings_ui = None;
                 self.quit = true;
             }
             _ => {}
         }
     }
 
+    fn open_settings(&mut self) {
+        if let Some(w) = &self.settings_ui {
+            unsafe {
+                ShowWindow(w.hwnd, SW_RESTORE);
+                SetForegroundWindow(w.hwnd);
+            }
+            return;
+        }
+        // Free the hotkey so the hotkey field can capture the combination.
+        self.unregister_hotkey();
+        self.settings_ui =
+            SettingsWindow::open(self.hinstance, &self.settings_class, &self.settings, autostart::is_enabled());
+        if self.settings_ui.is_none() {
+            let s = self.settings;
+            self.register_hotkey(&s);
+        }
+    }
+
+    fn settings_command(&mut self, id: u16) {
+        let Some(w) = &mut self.settings_ui else { return };
+        match id {
+            settings_ui::ID_COLOR => w.choose_color(),
+            settings_ui::ID_CROSS => w.update_enabled(),
+            settings_ui::ID_RESET => {
+                let auto = w.autostart_checked();
+                w.set_values(&Settings::default(), auto);
+            }
+            settings_ui::ID_OK => self.apply_settings(),
+            settings_ui::ID_CANCEL => {
+                self.settings_ui = None;
+                let s = self.settings;
+                if !self.register_hotkey(&s) {
+                    crate::message_box(&format!("The hotkey {} is already used by another app.", s.hotkey_name()));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn settings_error(&self, msg: &str) {
+        if let Some(w) = &self.settings_ui {
+            w.show_error(msg);
+        }
+    }
+
+    fn apply_settings(&mut self) {
+        let Some(w) = &self.settings_ui else { return };
+        let (s, auto) = match w.read() {
+            Ok(v) => v,
+            Err(msg) => return w.show_error(&msg),
+        };
+        if !self.register_hotkey(&s) {
+            self.settings_error(&format!(
+                "The hotkey {} is already used by another app. Please choose a different one.",
+                s.hotkey_name()
+            ));
+            return;
+        }
+        if auto != autostart::is_enabled() && !autostart::set_enabled(auto) {
+            self.settings_error("Could not change the Start with Windows setting.");
+        }
+        if let Err(e) = s.save() {
+            self.settings_error(&format!("Settings were applied but could not be saved:\n{e}"));
+        }
+        self.settings = s;
+        self.tray.set_tip(&tip(&s));
+        self.settings_ui = None;
+        self.dirty = true;
+    }
+
+    // ---- rendering ----------------------------------------------------
+
     pub fn render_if_dirty(&mut self) {
         if !self.dirty {
             return;
         }
         self.dirty = false;
+        let style = self.settings.style();
         let mut specs = Vec::new();
         for ov in &mut self.overlays {
             specs.clear();
@@ -269,9 +455,19 @@ impl App {
                     });
                 }
             }
-            ov.draw(&specs);
+            ov.draw(&specs, &style);
         }
     }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.unregister_hotkey();
+    }
+}
+
+fn tip(s: &Settings) -> String {
+    format!("Askeri Ruler ({})", s.hotkey_name())
 }
 
 fn contains(r: &RECT, x: i32, y: i32) -> bool {
@@ -302,17 +498,21 @@ fn register_raw_mouse(hwnd: HWND, on: bool) {
     }
 }
 
-fn monitor_rects() -> Vec<RECT> {
+fn monitor_list() -> Vec<Monitor> {
     unsafe extern "system" fn cb(hmon: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> windows_sys::core::BOOL {
-        let v = &mut *(data as *mut Vec<RECT>);
-        let mut mi: MONITORINFO = std::mem::zeroed();
-        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(hmon, &mut mi) != 0 {
-            v.push(mi.rcMonitor);
+        let v = &mut *(data as *mut Vec<Monitor>);
+        let mut mi: MONITORINFOEXW = std::mem::zeroed();
+        mi.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+        if GetMonitorInfoW(hmon, &mut mi as *mut _ as *mut MONITORINFO) != 0 {
+            let n = mi.szDevice.iter().position(|&c| c == 0).unwrap_or(mi.szDevice.len());
+            v.push(Monitor {
+                name: String::from_utf16_lossy(&mi.szDevice[..n]),
+                rect: mi.monitorInfo.rcMonitor,
+            });
         }
         1
     }
-    let mut v: Vec<RECT> = Vec::new();
+    let mut v: Vec<Monitor> = Vec::new();
     unsafe {
         EnumDisplayMonitors(null_mut(), std::ptr::null(), Some(cb), &mut v as *mut _ as LPARAM);
     }

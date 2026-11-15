@@ -3,6 +3,7 @@
 use std::ptr::{null, null_mut};
 
 use windows_sys::Win32::Foundation::*;
+use windows_sys::Win32::UI::Controls::*;
 use windows_sys::Win32::UI::Shell::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -13,16 +14,30 @@ pub const WM_TRAY: u32 = WM_APP + 1;
 pub const CMD_NEW_LINE: usize = 1;
 pub const CMD_CLEAR: usize = 2;
 pub const CMD_EXIT: usize = 3;
+pub const CMD_SETTINGS: usize = 4;
+pub const CMD_AUTOSTART: usize = 5;
+
+/// Resource id of the app icon (see build.rs).
+pub const ICON_ID: u16 = 1;
 
 pub struct Tray {
     hwnd: HWND,
+    hinstance: HINSTANCE,
+    icon: HICON,
     added: bool,
 }
 
 impl Tray {
-    pub fn new(hwnd: HWND) -> Self {
-        let mut t = Tray { hwnd, added: false };
-        t.add();
+    pub fn new(hwnd: HWND, hinstance: HINSTANCE, tip: &str) -> Self {
+        let mut icon: HICON = null_mut();
+        unsafe {
+            LoadIconMetric(hinstance, ICON_ID as usize as *const u16, LIM_SMALL, &mut icon);
+            if icon.is_null() {
+                icon = LoadIconW(null_mut(), IDI_APPLICATION);
+            }
+        }
+        let mut t = Tray { hwnd, hinstance, icon, added: false };
+        t.add(tip);
         t
     }
 
@@ -34,27 +49,44 @@ impl Tray {
         nid
     }
 
+    fn fill_tip(nid: &mut NOTIFYICONDATAW, tip: &str) {
+        let tip = wide(tip);
+        let n = tip.len().min(nid.szTip.len() - 1);
+        nid.szTip[..n].copy_from_slice(&tip[..n]);
+        nid.szTip[n] = 0;
+    }
+
     /// Adds the icon. Also called again when Explorer restarts.
-    pub fn add(&mut self) {
+    pub fn add(&mut self, tip: &str) {
+        let _ = self.hinstance;
         let mut nid = self.data();
         nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         nid.uCallbackMessage = WM_TRAY;
-        nid.hIcon = unsafe { LoadIconW(null_mut(), IDI_APPLICATION) };
-        let tip = wide("Askeri Ruler (Ctrl+Shift+X)");
-        let n = tip.len().min(nid.szTip.len());
-        nid.szTip[..n].copy_from_slice(&tip[..n]);
+        nid.hIcon = self.icon;
+        Self::fill_tip(&mut nid, tip);
         self.added = unsafe { Shell_NotifyIconW(NIM_ADD, &nid) } != 0;
     }
 
+    pub fn set_tip(&self, tip: &str) {
+        let mut nid = self.data();
+        nid.uFlags = NIF_TIP;
+        Self::fill_tip(&mut nid, tip);
+        unsafe {
+            Shell_NotifyIconW(NIM_MODIFY, &nid);
+        }
+    }
+
     /// Shows the context menu at the cursor and returns the chosen command.
-    pub fn show_menu(&self, has_lines: bool) -> Option<usize> {
+    pub fn show_menu(&self, has_lines: bool, hotkey: &str, autostart: bool) -> Option<usize> {
         unsafe {
             let menu = CreatePopupMenu();
             if menu.is_null() {
                 return None;
             }
-            let new_line = wide("New line\tCtrl+Shift+X");
+            let new_line = wide(&format!("New line\t{hotkey}"));
             let clear = wide("Clear all lines\tEsc");
+            let settings = wide("Settings…");
+            let auto = wide("Start with Windows");
             let exit = wide("Exit");
             AppendMenuW(menu, MF_STRING, CMD_NEW_LINE, new_line.as_ptr());
             AppendMenuW(
@@ -64,7 +96,16 @@ impl Tray {
                 clear.as_ptr(),
             );
             AppendMenuW(menu, MF_SEPARATOR, 0, null());
+            AppendMenuW(menu, MF_STRING, CMD_SETTINGS, settings.as_ptr());
+            AppendMenuW(
+                menu,
+                MF_STRING | if autostart { MF_CHECKED } else { MF_UNCHECKED },
+                CMD_AUTOSTART,
+                auto.as_ptr(),
+            );
+            AppendMenuW(menu, MF_SEPARATOR, 0, null());
             AppendMenuW(menu, MF_STRING, CMD_EXIT, exit.as_ptr());
+            SetMenuDefaultItem(menu, CMD_SETTINGS as u32, 0);
 
             let mut pt = POINT { x: 0, y: 0 };
             GetCursorPos(&mut pt);
@@ -92,11 +133,12 @@ impl Tray {
 
 impl Drop for Tray {
     fn drop(&mut self) {
-        if self.added {
-            let nid = self.data();
-            unsafe {
+        unsafe {
+            if self.added {
+                let nid = self.data();
                 Shell_NotifyIconW(NIM_DELETE, &nid);
             }
+            DestroyIcon(self.icon);
         }
     }
 }

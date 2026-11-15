@@ -25,6 +25,7 @@ use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::raster;
+use crate::settings::Style;
 
 /// Invisible but hit-testable background (alpha = 1).
 const BG_INTERACTIVE: u32 = 0x01_00_00_00;
@@ -34,26 +35,14 @@ const BG_CLEAR: u32 = 0x00_00_00_00;
 /// Height of each strip window in physical pixels.
 const STRIP_HEIGHT: i32 = 96;
 
-/// Line thickness in physical pixels.
-pub const LINE_WIDTH: f64 = 2.0;
-/// Pivot dot diameter in physical pixels.
-pub const DOT_DIAMETER: f64 = 10.0;
-/// Width of the dashed diagonal cross lines.
-pub const CROSS_WIDTH: f64 = 2.0;
-/// Dash pattern of the cross lines; the first dash starts a few pixels
-/// outside the dot so the dot stays clearly visible.
-pub const CROSS_DASH: raster::Dash = raster::Dash {
-    on: 6.0,
-    off: 6.0,
-    start: DOT_DIAMETER / 2.0 + 4.0,
-};
-
-/// Red with the given coverage, as premultiplied BGRA in a little-endian u32
-/// (0xAARRGGBB). Alpha never drops below the background's so interactive
-/// overlays stay hit-testable everywhere.
-fn ink(coverage: u8, bg_alpha: u8) -> u32 {
+/// `color` (0xRRGGBB) at the given coverage, as premultiplied BGRA in a
+/// little-endian u32 (0xAARRGGBB). Alpha never drops below the background's
+/// so interactive overlays stay hit-testable everywhere.
+fn ink(coverage: u8, bg_alpha: u8, color: u32) -> u32 {
+    let c = coverage as u32;
     let a = coverage.max(bg_alpha) as u32;
-    (a << 24) | ((coverage as u32) << 16)
+    let ch = |shift: u32| (((color >> shift) & 0xFF) * c + 127) / 255;
+    (a << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)
 }
 
 /// A line to draw, in this overlay's local pixel coordinates.
@@ -149,7 +138,7 @@ impl Overlay {
                 }
                 ov.strips.push(hwnd);
             }
-            ov.draw(&[]);
+            ov.draw(&[], &crate::settings::Settings::default().style());
             for &s in &ov.strips {
                 ShowWindow(s, SW_SHOWNOACTIVATE);
             }
@@ -191,21 +180,21 @@ impl Overlay {
     }
 
     /// Redraws the overlay with the given lines and pushes the changed areas.
-    pub fn draw(&mut self, lines: &[LineSpec]) {
+    pub fn draw(&mut self, lines: &[LineSpec], style: &Style) {
         let (w, h) = (self.w, self.h);
 
         let mut new = std::mem::take(&mut self.scratch);
         new.clear();
         for l in lines {
-            let (cx, cy) = raster::shape_center(l.px, l.py, LINE_WIDTH);
-            raster::line_pixels(w, h, cx, cy, l.angle, LINE_WIDTH, None, &mut new);
-            if l.cross {
+            let (cx, cy) = raster::shape_center(l.px, l.py, style.line_width);
+            raster::line_pixels(w, h, cx, cy, l.angle, style.line_width, None, &mut new);
+            if l.cross && style.show_cross {
                 for d in [FRAC_PI_4, -FRAC_PI_4] {
-                    raster::line_pixels(w, h, cx, cy, l.angle + d, CROSS_WIDTH, Some(&CROSS_DASH), &mut new);
+                    raster::line_pixels(w, h, cx, cy, l.angle + d, style.cross_width, Some(&style.dash), &mut new);
                 }
             }
             if l.dot {
-                raster::dot_pixels(w, h, cx, cy, DOT_DIAMETER, &mut new);
+                raster::dot_pixels(w, h, cx, cy, style.dot_diameter, &mut new);
             }
         }
 
@@ -243,8 +232,8 @@ impl Overlay {
             let px = self.pixels();
             for &(i, a) in &new {
                 let cur = px[i as usize];
-                if a > ((cur >> 16) & 0xFF) as u8 {
-                    px[i as usize] = ink(a, bg_alpha);
+                if a > (cur >> 24) as u8 {
+                    px[i as usize] = ink(a, bg_alpha, style.color);
                 }
             }
         }
@@ -353,10 +342,6 @@ pub unsafe extern "system" fn overlay_wndproc(hwnd: HWND, msg: u32, wparam: WPAR
         // We work in physical pixels and size ourselves to the monitor, so
         // ignore the system's suggested DPI rectangle.
         WM_DPICHANGED => 0,
-        WM_DISPLAYCHANGE => {
-            push(Event::DisplayChanged);
-            0
-        }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
