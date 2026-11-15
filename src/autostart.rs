@@ -48,24 +48,27 @@ pub fn set_enabled(enabled: bool) -> Result<(), String> {
 }
 
 mod packaged {
+    use std::sync::OnceLock;
+
     use windows::core::HSTRING;
     use windows::ApplicationModel::{StartupTask, StartupTaskState};
-    use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
+    use windows::Win32::System::Com::CoIncrementMTAUsage;
 
     /// Must match `TaskId` in AppxManifest.xml.
     const TASK_ID: &str = "AskeriRullerStartup";
 
-    /// Runs a WinRT call on a short-lived MTA thread, so blocking on the
-    /// async operation can never stall or deadlock the UI thread's apartment.
+    /// Runs a WinRT call on a worker thread in the process-wide MTA, so
+    /// blocking on the async operation never stalls the UI thread.
+    ///
+    /// The MTA is kept alive for the whole process with CoIncrementMTAUsage
+    /// (worker threads join it implicitly). Initializing COM per short-lived
+    /// thread instead would tear the MTA down when that thread exits, leaving
+    /// the `windows` crate's cached activation factories dangling and
+    /// crashing the next call.
     fn on_mta<T: Send + 'static>(f: impl FnOnce() -> windows::core::Result<T> + Send + 'static) -> windows::core::Result<T> {
-        std::thread::spawn(move || {
-            unsafe {
-                let _ = RoInitialize(RO_INIT_MULTITHREADED);
-            }
-            f()
-        })
-        .join()
-        .unwrap_or_else(|_| Err(windows::core::Error::empty()))
+        static MTA: OnceLock<bool> = OnceLock::new();
+        MTA.get_or_init(|| unsafe { CoIncrementMTAUsage().is_ok() });
+        std::thread::spawn(f).join().unwrap_or_else(|_| Err(windows::core::Error::empty()))
     }
 
     fn state() -> windows::core::Result<StartupTaskState> {
