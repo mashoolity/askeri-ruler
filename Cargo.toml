@@ -6,7 +6,7 @@ description = "On-screen 1px rotatable guide line for Windows"
 
 [dependencies.windows]
 version = "0.62"
-features = ["ApplicationModel", "Foundation", "Win32_System_Com"]
+features = ["ApplicationModel", "ApplicationModel_Activation", "Foundation", "Win32_System_Com"]
 
 [dev-dependencies]
 # PNG compression for examples/gen_assets.rs (Store logos); not linked into the app.

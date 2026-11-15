@@ -128,7 +128,8 @@ impl App {
             Event::EscapePressed => self.clear_all(),
             Event::EscapeReleased => self.update_hook(),
             Event::TrayMenu => self.tray_menu(),
-            Event::TrayDoubleClick => self.open_settings(),
+            Event::ShowSettings => self.open_settings(),
+            Event::Exit => self.exit(),
             Event::TaskbarCreated => self.tray.add(&tip(&self.settings)),
             Event::DisplayChanged => self.display_changed(),
             Event::SettingsCommand(id) => self.settings_command(id),
@@ -351,13 +352,15 @@ impl App {
                     crate::message_box(&msg);
                 }
             }
-            Some(tray::CMD_EXIT) => {
-                self.clear_all();
-                self.settings_ui = None;
-                self.quit = true;
-            }
+            Some(tray::CMD_EXIT) => self.exit(),
             _ => {}
         }
+    }
+
+    fn exit(&mut self) {
+        self.clear_all();
+        self.settings_ui = None;
+        self.quit = true;
     }
 
     fn open_settings(&mut self) {

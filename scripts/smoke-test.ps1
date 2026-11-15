@@ -75,26 +75,29 @@ try {
     Check 'settings.ini written' (Test-Path $ini)
 
     # 2. Hotkey shows a line across the monitor at the cursor row.
+    # Red pixels already on screen in that row (other apps) are the baseline.
     $pt = New-Object W+POINT; [W]::GetCursorPos([ref]$pt) | Out-Null
+    $base = RedInRow $pt.Y
     Key 0x11 $false; Key 0x10 $false; Key 0x58 $false; Key 0x58 $true; Key 0x10 $true; Key 0x11 $true
     Start-Sleep -Milliseconds 400
-    $placing = RedInRow $pt.Y
-    Check "line visible while placing ($placing px)" ($placing -gt 500)
+    $placing = (RedInRow $pt.Y) - $base
+    Check "line visible while placing (+$placing px)" ($placing -gt 500)
 
     # 3. Left click locks the line.
     [W]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); [W]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 400
-    Check 'line stays after lock' ((RedInRow $pt.Y) -gt 500)
+    Check 'line stays after lock' (((RedInRow $pt.Y) - $base) -gt 500)
 
     # 4. Simulated display change keeps the locked line (600 ms debounce).
     [W]::PostMessageW($main, 0x007E, [IntPtr]32, [IntPtr]::Zero) | Out-Null       # WM_DISPLAYCHANGE
     Start-Sleep -Milliseconds 1200
-    Check 'line survives display change' ((RedInRow $pt.Y) -gt 500)
+    Check 'line survives display change' (((RedInRow $pt.Y) - $base) -gt 500)
 
-    # 5. Esc clears everything.
+    # 5. Esc clears everything (back to the baseline, allowing a little noise).
     Key 0x1B $false; Key 0x1B $true
     Start-Sleep -Milliseconds 400
-    Check 'Esc removes all lines' ((RedInRow $pt.Y) -eq 0)
+    $after = (RedInRow $pt.Y) - $base
+    Check "Esc removes all lines (+$after px)" ($after -lt 20)
     Check 'app still running' (-not $p.HasExited)
 }
 finally {

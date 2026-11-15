@@ -20,6 +20,15 @@ lock it in place, and keep working in any app underneath.
 - **Multi-monitor and high-DPI aware**; lines survive resolution and monitor changes.
 - **Native and lightweight** – a single ~500 KB Rust executable, no runtime, no network access.
 
+## Download
+
+Get the latest **`AskeriRuler-Setup-<version>.exe`** (or the portable `.zip`) from
+[Releases](https://github.com/mashoolity/askeri-ruler/releases). The installer is per-user and
+needs no administrator rights. Windows 10 (1809) or later, x64.
+
+> Until the releases are code-signed, Windows SmartScreen may show "Windows protected your PC".
+> Click **More info → Run anyway**.
+
 ## Usage
 
 | Action | How |
@@ -66,6 +75,16 @@ powershell -ExecutionPolicy Bypass -File packaging\build-msix.ps1 -Register  # l
 Package identity lives in [`packaging/package.json`](packaging/package.json). See
 [STORE.md](STORE.md) for the full Microsoft Store submission guide.
 
+### Installer and releases
+
+```powershell
+winget install JRSoftware.InnoSetup                                    # once
+powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1  # -> dist\
+```
+
+Pushing a tag like `v0.2.0` (matching `Cargo.toml`) makes GitHub Actions build and publish a
+release automatically. See [RELEASING.md](RELEASING.md), including code signing.
+
 ## Project layout
 
 ```
@@ -82,8 +101,11 @@ src/
   icon_art.rs     procedural app icon (used by build.rs and the asset generator)
 build.rs          generates app.ico, embeds icon + manifest + version info
 res/app.manifest  PerMonitorV2 DPI awareness, common controls v6
-examples/gen_assets.rs   Store / tile logo PNGs
+examples/gen_assets.rs   Store / tile logo PNGs and installer icon
 packaging/        MSIX manifest template and build script
+installer/        Inno Setup script and installer build script
+scripts/          end-to-end smoke test
+.github/workflows/release.yml   builds and publishes GitHub releases on version tags
 ```
 
 ## Privacy

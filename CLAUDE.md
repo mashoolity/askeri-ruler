@@ -18,7 +18,12 @@ cargo test                 # unit tests: raster.rs, settings.rs
 powershell -ExecutionPolicy Bypass -File packaging\build-msix.ps1            # MSIX
 powershell -ExecutionPolicy Bypass -File packaging\build-msix.ps1 -Register  # dev install
 powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1              # end-to-end check
+powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1       # dist\ setup.exe + zip
 ```
+
+Releases: pushing tag `vX.Y.Z` (must equal `Cargo.toml` version) runs
+`.github/workflows/release.yml`, which publishes the installer and zip to GitHub Releases.
+See RELEASING.md. Signing is optional via a `SIGN_COMMAND` containing `{file}`.
 
 - The shell is Windows PowerShell 5.1. If `cargo` is not on PATH in an existing session, add
   `$env:USERPROFILE\.cargo\bin`.
@@ -55,6 +60,12 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1              # e
   packaged (`GetCurrentPackageFullName`). WinRT calls run on a worker thread in the
   process-wide MTA kept alive by `CoIncrementMTAUsage` — do **not** `RoInitialize` per
   short-lived thread (it crashed in combase.dll because windows-rs caches activation factories).
+
+- **Single instance & lifecycle** (`main.rs`): a named mutex. A second copy started with
+  `--autostart` (Run key) or by the packaged StartupTask exits silently; one started by the
+  user posts `WM_APP+2` so the running copy opens Settings. `WM_CLOSE` on the main window
+  (what `taskkill` without /f and the installer send) quits cleanly; overlays ignore WM_CLOSE.
+  The Run value name `AskeriRuller` and `--autostart` are shared with `installer\askeri-ruler.iss`.
 
 ## Conventions
 

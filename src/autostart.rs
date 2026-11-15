@@ -16,7 +16,19 @@ use windows_sys::Win32::System::Registry::*;
 use crate::util::wide;
 
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+/// Also used by installer\askeri-ruler.iss — keep in sync.
 const VALUE_NAME: &str = "AskeriRuller";
+/// Command-line flag added to the Run key entry (and by the installer).
+pub const AUTOSTART_ARG: &str = "--autostart";
+
+/// True when Windows started us at login (Run key flag, or the packaged
+/// startup task) rather than the user launching us.
+pub fn launched_at_startup() -> bool {
+    if std::env::args().skip(1).any(|a| a.eq_ignore_ascii_case(AUTOSTART_ARG)) {
+        return true;
+    }
+    is_packaged() && packaged::activated_by_startup_task()
+}
 
 /// True when running from an MSIX package (e.g. installed from the Store).
 pub fn is_packaged() -> bool {
@@ -79,6 +91,14 @@ mod packaged {
         matches!(state(), Ok(StartupTaskState::Enabled | StartupTaskState::EnabledByPolicy))
     }
 
+    pub fn activated_by_startup_task() -> bool {
+        use windows::ApplicationModel::Activation::ActivationKind;
+        use windows::ApplicationModel::AppInstance;
+        on_mta(|| AppInstance::GetActivatedEventArgs()?.Kind())
+            .map(|k| k == ActivationKind::StartupTask)
+            .unwrap_or(false)
+    }
+
     pub fn set_enabled(enabled: bool) -> Result<(), String> {
         let result = on_mta(move || {
             let task = StartupTask::GetAsync(&HSTRING::from(TASK_ID))?.join()?;
@@ -122,7 +142,7 @@ fn registry_set_enabled(enabled: bool) -> bool {
     unsafe {
         if enabled {
             let Some(exe) = exe_path() else { return false };
-            let cmd = wide(&format!("\"{exe}\""));
+            let cmd = wide(&format!("\"{exe}\" {AUTOSTART_ARG}"));
             RegSetKeyValueW(
                 HKEY_CURRENT_USER,
                 key.as_ptr(),

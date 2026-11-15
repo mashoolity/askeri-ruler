@@ -28,6 +28,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 use events::{push, Event};
 use util::wide;
 
+/// Posted by a second instance to ask this one to open its settings window.
+const WM_SHOW_SETTINGS: u32 = WM_APP + 2;
+
 /// Timer used to debounce bursts of WM_DISPLAYCHANGE.
 const TIMER_DISPLAY: usize = 1;
 const DISPLAY_SETTLE_MS: u32 = 600;
@@ -52,7 +55,13 @@ fn main() {
         let mutex_name = wide("Local\\AskeriRuller.SingleInstance");
         let _mutex = CreateMutexW(null(), 1, mutex_name.as_ptr());
         if GetLastError() == ERROR_ALREADY_EXISTS {
-            message_box("Askeri Ruler is already running.\nLook for its icon in the notification area.");
+            // Started at login while another copy (e.g. the Store and the
+            // installer version both set to autostart) is already running:
+            // exit quietly. Started by the user: bring up the running copy's
+            // settings window so the launch visibly does something.
+            if !autostart::launched_at_startup() {
+                show_running_instance();
+            }
             return;
         }
 
@@ -108,6 +117,21 @@ fn main() {
         drop(app);
         DestroyWindow(main_hwnd);
     }
+}
+
+/// Asks the already-running instance to open its settings window.
+unsafe fn show_running_instance() {
+    let class = wide("AskeriRullerMain");
+    let hwnd = FindWindowW(class.as_ptr(), null());
+    if hwnd.is_null() {
+        return;
+    }
+    // We are the foreground process (the user just launched us), so we may
+    // let the running instance take the foreground for its settings window.
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(hwnd, &mut pid);
+    AllowSetForegroundWindow(pid);
+    PostMessageW(hwnd, WM_SHOW_SETTINGS, 0, 0);
 }
 
 /// Message loop that drains all pending messages, applies the resulting
@@ -178,9 +202,19 @@ unsafe extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
         tray::WM_TRAY => {
             match (lparam as u32) & 0xFFFF {
                 WM_RBUTTONUP | WM_CONTEXTMENU => push(Event::TrayMenu),
-                WM_LBUTTONDBLCLK => push(Event::TrayDoubleClick),
+                WM_LBUTTONDBLCLK => push(Event::ShowSettings),
                 _ => {}
             }
+            0
+        }
+        WM_SHOW_SETTINGS => {
+            push(Event::ShowSettings);
+            0
+        }
+        // Sent by `taskkill` (without /f), e.g. from the installer and
+        // uninstaller: exit cleanly so the tray icon is removed.
+        WM_CLOSE => {
+            push(Event::Exit);
             0
         }
         WM_DISPLAYCHANGE => {

@@ -107,6 +107,10 @@ fn main() {
     for (scale, s) in [(100, 50), (125, 63), (150, 75), (200, 100), (400, 200)] {
         write(dir, &format!("StoreLogo.scale-{scale}.png"), s, s, s);
     }
+    // Icon for the standalone installer (setup.exe); not copied into the MSIX.
+    std::fs::write(dir.join("app.ico"), icon_art::ico(&[16, 20, 24, 32, 40, 48, 64, 256])).unwrap();
+    println!("app.ico");
+
     // For the Partner Center listing (not part of the package).
     let listing = dir.parent().unwrap_or(dir).join("listing");
     std::fs::create_dir_all(&listing).unwrap();

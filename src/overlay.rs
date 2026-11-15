@@ -342,6 +342,8 @@ pub unsafe extern "system" fn overlay_wndproc(hwnd: HWND, msg: u32, wparam: WPAR
         // We work in physical pixels and size ourselves to the monitor, so
         // ignore the system's suggested DPI rectangle.
         WM_DPICHANGED => 0,
+        // Overlays are owned by App; `taskkill` closes the app via the main window.
+        WM_CLOSE => 0,
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }

@@ -31,8 +31,10 @@ pub enum Event {
     EscapeReleased,
     /// Tray icon right-clicked.
     TrayMenu,
-    /// Tray icon double-clicked.
-    TrayDoubleClick,
+    /// Open the settings window (tray double-click, or a second launch).
+    ShowSettings,
+    /// Quit the app (WM_CLOSE from taskkill / the installer).
+    Exit,
     /// A button in the settings window was clicked (control id).
     SettingsCommand(u16),
     /// The settings window moved to a monitor with a different DPI.
