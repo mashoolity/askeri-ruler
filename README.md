@@ -16,10 +16,12 @@ lock it in place, and keep working in any app underneath.
   (**Shift** = fine, **Ctrl** = snap to 15° steps).
 - **Move after rotating** – after releasing the right button the line keeps its angle and still
   follows the mouse; rotate again or **left-click to lock** it.
-- **Dashed X guide** – a dashed cross at ±45° through the pivot while placing.
-- **Angle bisector** – with two or more lines, each new line gets a dotted bisector of the acute
+- **Dashed X guide** – a blue dashed cross at ±45° through the pivot while placing.
+- **Angle bisector** – with two or more lines, each new line gets a green dotted bisector of the acute
   angle it forms with the previous line (skipped for parallel and 90° lines).
-- **Click-through when locked** – locked lines never block clicks or typing in other apps.
+- **Click-through when locked** – locked lines never block clicks or typing in other apps; only
+  the pivot dot reacts to the mouse.
+- **Drag to reposition** – drag a locked line by its dot to move it; its angle stays the same.
 - **Multiple lines** – press the hotkey again to add another line.
 - **Esc removes all lines** from anywhere.
 - **Multi-monitor and high-DPI aware**; lines survive resolution and monitor changes.
@@ -43,7 +45,8 @@ needs no administrator rights. Windows 10 (1809) or later, x64.
 | Rotate | Hold right button and move the mouse like a knob (right/up = clockwise); the X is removed |
 | Fine rotation / snap | Hold **Shift** / **Ctrl** while rotating |
 | Move again after rotating | Release the right button and move the mouse |
-| Lock the line | Left click (if it was never rotated, the dashed X stays) |
+| Lock the line | Left click (if it was never rotated, the blue dashed X stays) |
+| Move a locked line | Drag its dot with the left button |
 | Remove all lines | **Esc** (or tray menu → *Clear all lines*) |
 | Settings | Double-click the tray icon (or tray menu → *Settings…*) |
 

@@ -21,6 +21,12 @@ pub enum Event {
     RightDown,
     /// Right button released (lock the line).
     RightUp,
+    /// Left button pressed on a locked line's dot (line id).
+    HandleDown(u32),
+    /// Mouse moved over (or, while dragging, captured by) a dot handle.
+    HandleDrag,
+    /// Left button released / capture lost while dragging a dot.
+    HandleUp,
     /// Relative mouse movement from raw input (used while rotating).
     RawMouseDelta { dx: i32, dy: i32 },
     /// Our window lost mouse capture unexpectedly.

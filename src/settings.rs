@@ -47,7 +47,7 @@ impl Default for Settings {
             hotkey_vk: b'X' as u32,
             color: 0xFF0000,
             line_width: 2,
-            dot_diameter: 10,
+            dot_diameter: 14,
             show_cross: true,
             cross_width: 2,
             dash_length: 6,
@@ -69,7 +69,16 @@ pub struct Style {
     pub cross_width: f64,
     pub dash: Dash,
     pub show_bisector: bool,
+    /// Color of the dashed ±45° cross (0xRRGGBB).
+    pub cross_color: u32,
+    /// Color of the dotted angle bisector (0xRRGGBB).
+    pub bisector_color: u32,
 }
+
+/// Bright blue for the dashed cross.
+pub const CROSS_COLOR: u32 = 0x1E90FF;
+/// Bright green for the angle bisector.
+pub const BISECTOR_COLOR: u32 = 0x00FF00;
 
 impl Settings {
     pub fn style(&self) -> Style {
@@ -83,10 +92,12 @@ impl Settings {
             dash: Dash {
                 on: self.dash_length as f64,
                 off: self.dash_gap as f64,
-                // Leave a little room around the dot.
-                start: dot / 2.0 + 4.0,
+                // Start just outside the dot and its rings (see overlay::paint_dot).
+                start: dot / 2.0 + 7.0,
             },
             show_bisector: self.show_bisector,
+            cross_color: CROSS_COLOR,
+            bisector_color: BISECTOR_COLOR,
         }
     }
 

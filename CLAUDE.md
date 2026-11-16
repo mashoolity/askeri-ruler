@@ -42,6 +42,13 @@ See RELEASING.md. Signing is optional via a `SIGN_COMMAND` containing `{file}`.
 - **State machine** (`app.rs`): Idle → Placing (hotkey) ⇄ Rotating (RMB down / RMB up) → Locked
   (LMB). After rotating, the line keeps its angle and follows the mouse again until a left click.
   Hotkey while locked adds another line. Esc clears everything.
+- **Compositing** (`overlay::composite`): shapes are drawn back to front with "over" blending,
+  each in its own color: bisectors, X crosses, main lines, active dot (`paint_dot`).
+- **Drag handles** (`handle.rs`): each locked line's dot lives in its own small layered window.
+  Only the dot's pixels have alpha > 0, so exactly the dot is hit-testable while the overlays stay
+  click-through. LMB down → `SetCapture` → moves update the line pivot (with the grab offset);
+  handles turn `WS_EX_TRANSPARENT` while a new line is being placed. `App::sync_handles` keeps one
+  handle per locked line (matched by `Line::id`) and re-raises them above the overlays.
 - **Bisectors**: `App::render_if_dirty` pairs consecutive lines (creation order, active last) on
   the same monitor and draws the dotted acute-angle bisector from `raster::bisector`
   (none for parallel or 90° lines, ±0.5°).
@@ -84,8 +91,10 @@ See RELEASING.md. Signing is optional via a `SIGN_COMMAND` containing `{file}`.
 
 ## Product decisions (don't revisit without the user)
 
-- Line: anti-aliased, default 2 px red; round pivot dot (default 10 px) shown only while
-  placing/rotating.
+- Line: anti-aliased, default 2 px red. Round pivot dot (default 14 px) with a white ring and dark
+  outline, shown while placing **and on locked lines**, where it is the drag handle.
+- Colors: dashed X is blue (`CROSS_COLOR`), bisector is bright green (`BISECTOR_COLOR`); the main
+  line uses the user's color.
 - Dashed X at ±45° shows while placing; removed once RMB rotation starts; kept if the line is
   locked by left click without ever rotating.
 - Rotation is knob-style (any mouse direction; right/up = clockwise) — testers found up/down only

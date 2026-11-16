@@ -21,6 +21,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::autostart;
 use crate::events::Event;
+use crate::handle::Handle;
 use crate::hook::{self, KeyboardHook};
 use crate::overlay::{BisectorSpec, LineSpec, Overlay};
 use crate::raster::{self, normalize_angle};
@@ -32,6 +33,8 @@ pub const HOTKEY_ID: i32 = 1;
 
 #[derive(Clone, Copy)]
 struct Line {
+    /// Stable id, used to match a locked line with its drag handle.
+    id: u32,
     /// Pivot in virtual-screen physical pixels.
     px: f64,
     py: f64,
@@ -49,6 +52,13 @@ struct Active {
     raw_angle: f64,
 }
 
+/// A locked line being dragged by its dot.
+struct Drag {
+    id: u32,
+    /// Pivot minus cursor at the moment the drag started (no jump on grab).
+    offset: (f64, f64),
+}
+
 #[derive(Clone)]
 struct Monitor {
     name: String,
@@ -60,13 +70,20 @@ pub struct App {
     main_hwnd: HWND,
     overlay_class: Vec<u16>,
     settings_class: Vec<u16>,
+    handle_class: Vec<u16>,
     settings: Settings,
     hotkey_registered: bool,
     /// Monitors the current overlays were created for (same order).
     monitors: Vec<Monitor>,
     overlays: Vec<Overlay>,
     lines: Vec<Line>,
+    next_id: u32,
     active: Option<Active>,
+    /// Dot handles of the locked lines (one per line, matched by id).
+    handles: Vec<Handle>,
+    dragging: Option<Drag>,
+    /// Handles must be re-raised above the overlays after these were raised.
+    raise_handles: bool,
     hook: Option<KeyboardHook>,
     tray: Tray,
     settings_ui: Option<SettingsWindow>,
@@ -75,7 +92,13 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(hinstance: HINSTANCE, main_hwnd: HWND, overlay_class: Vec<u16>, settings_class: Vec<u16>) -> Self {
+    pub fn new(
+        hinstance: HINSTANCE,
+        main_hwnd: HWND,
+        overlay_class: Vec<u16>,
+        settings_class: Vec<u16>,
+        handle_class: Vec<u16>,
+    ) -> Self {
         let settings = Settings::load();
         let tray = Tray::new(main_hwnd, hinstance, &tip(&settings));
         let mut app = App {
@@ -83,12 +106,17 @@ impl App {
             main_hwnd,
             overlay_class,
             settings_class,
+            handle_class,
             settings,
             hotkey_registered: false,
             monitors: Vec::new(),
             overlays: Vec::new(),
             lines: Vec::new(),
+            next_id: 1,
             active: None,
+            handles: Vec::new(),
+            dragging: None,
+            raise_handles: false,
             hook: None,
             tray,
             settings_ui: None,
@@ -133,6 +161,9 @@ impl App {
                 }
             }
             Event::RawMouseDelta { dx, dy } => self.rotate_by(dx, dy),
+            Event::HandleDown(id) => self.begin_drag(id),
+            Event::HandleDrag => self.drag(),
+            Event::HandleUp => self.end_drag(),
             Event::EscapePressed => self.clear_all(),
             Event::EscapeReleased => self.update_hook(),
             Event::TrayMenu => self.tray_menu(),
@@ -189,16 +220,20 @@ impl App {
                 ov.bring_to_top();
             }
         }
+        self.raise_handles = true;
     }
 
     fn start_line(&mut self) {
         if self.active.is_some() {
             return;
         }
+        self.end_drag();
         self.ensure_overlays(true);
         let p = cursor_pos();
+        let id = self.next_id;
+        self.next_id += 1;
         self.active = Some(Active {
-            line: Line { px: p.x as f64, py: p.y as f64, angle: 0.0, cross: true },
+            line: Line { id, px: p.x as f64, py: p.y as f64, angle: 0.0, cross: true },
             rotating: false,
             raw_angle: 0.0,
         });
@@ -285,14 +320,52 @@ impl App {
         for ov in &mut self.overlays {
             ov.set_interactive(false);
         }
+        self.raise_handles = true;
         self.dirty = true;
         self.update_hook();
     }
 
+    // ---- dragging a locked line by its dot ----------------------------
+
+    fn begin_drag(&mut self, id: u32) {
+        if self.active.is_some() || self.dragging.is_some() {
+            return;
+        }
+        let Some(l) = self.lines.iter().find(|l| l.id == id) else { return };
+        let p = cursor_pos();
+        self.dragging = Some(Drag { id, offset: (l.px - p.x as f64, l.py - p.y as f64) });
+        if let Some(h) = self.handles.iter().find(|h| h.id == id) {
+            unsafe {
+                SetCapture(h.hwnd);
+            }
+        }
+    }
+
+    fn drag(&mut self) {
+        let Some(d) = &self.dragging else { return };
+        let p = cursor_pos();
+        if let Some(l) = self.lines.iter_mut().find(|l| l.id == d.id) {
+            l.px = p.x as f64 + d.offset.0;
+            l.py = p.y as f64 + d.offset.1;
+            self.dirty = true;
+        }
+    }
+
+    fn end_drag(&mut self) {
+        if self.dragging.take().is_some() {
+            unsafe {
+                // Triggers WM_CAPTURECHANGED -> HandleUp, ignored now.
+                ReleaseCapture();
+            }
+        }
+    }
+
     fn clear_all(&mut self) {
+        self.end_drag();
         self.end_rotate();
         self.active = None;
         self.lines.clear();
+        self.handles.clear();
         self.overlays.clear(); // destroys the windows and frees the bitmaps
         self.monitors.clear();
         self.dirty = false;
@@ -306,6 +379,7 @@ impl App {
         if self.overlays.is_empty() {
             return;
         }
+        self.end_drag();
         self.end_rotate();
         let old = std::mem::take(&mut self.monitors);
         let new = monitor_list();
@@ -323,6 +397,7 @@ impl App {
         });
         self.overlays.clear();
         if self.lines.is_empty() && self.active.is_none() {
+            self.handles.clear();
             self.update_hook();
             return;
         }
@@ -489,6 +564,30 @@ impl App {
                 }
             }
             ov.draw(&specs, &bisectors, &style);
+        }
+        self.sync_handles(&style);
+    }
+
+    /// One dot handle per locked line, centered on the line's pivot.
+    /// Handles are click-through while a new line is being placed.
+    fn sync_handles(&mut self, style: &crate::settings::Style) {
+        let ids: Vec<u32> = self.lines.iter().map(|l| l.id).collect();
+        self.handles.retain(|h| ids.contains(&h.id));
+        let placing = self.active.is_some();
+        let raise = std::mem::take(&mut self.raise_handles);
+        for l in &self.lines {
+            let idx = match self.handles.iter().position(|h| h.id == l.id) {
+                Some(i) => i,
+                None => match Handle::new(self.handle_class.as_ptr(), self.hinstance, l.id) {
+                    Some(h) => {
+                        self.handles.push(h);
+                        self.handles.len() - 1
+                    }
+                    None => continue,
+                },
+            };
+            let (cx, cy) = raster::shape_center(l.px, l.py, style.line_width);
+            self.handles[idx].update(cx, cy, style, placing, raise);
         }
     }
 }

@@ -4,6 +4,7 @@
 mod app;
 mod autostart;
 mod events;
+mod handle;
 mod hook;
 mod overlay;
 mod raster;
@@ -78,6 +79,8 @@ fn main() {
         let main_class = wide("AskeriRullerMain");
         let overlay_class = wide("AskeriRullerOverlay");
         let settings_class = wide("AskeriRullerSettings");
+        let handle_class = wide("AskeriRullerHandle");
+        register_class(hinstance, &handle_class, handle::handle_wndproc, null_mut(), null_mut());
         register_class(hinstance, &main_class, main_wndproc, null_mut(), null_mut());
         register_class(hinstance, &overlay_class, overlay::overlay_wndproc, null_mut(), null_mut());
         register_class(
@@ -112,7 +115,7 @@ fn main() {
 
         TASKBAR_CREATED.store(RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()), Ordering::Relaxed);
 
-        let mut app = app::App::new(hinstance, main_hwnd, overlay_class, settings_class);
+        let mut app = app::App::new(hinstance, main_hwnd, overlay_class, settings_class, handle_class);
         run_loop(&mut app);
 
         drop(app);

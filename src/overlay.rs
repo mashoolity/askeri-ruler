@@ -35,14 +35,62 @@ const BG_CLEAR: u32 = 0x00_00_00_00;
 /// Height of each strip window in physical pixels.
 const STRIP_HEIGHT: i32 = 96;
 
-/// `color` (0xRRGGBB) at the given coverage, as premultiplied BGRA in a
-/// little-endian u32 (0xAARRGGBB). Alpha never drops below the background's
-/// so interactive overlays stay hit-testable everywhere.
-fn ink(coverage: u8, bg_alpha: u8, color: u32) -> u32 {
-    let c = coverage as u32;
-    let a = coverage.max(bg_alpha) as u32;
-    let ch = |shift: u32| (((color >> shift) & 0xFF) * c + 127) / 255;
-    (a << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)
+/// Composites `color` (0xRRGGBB) at the given per-pixel coverage (times
+/// `opacity`) over premultiplied BGRA pixels (0xAARRGGBB), "over" operator.
+/// Touched indices are appended to `drawn`. Alpha never decreases, so an
+/// interactive overlay's alpha-1 background stays hit-testable.
+pub(crate) fn composite(px: &mut [u32], cov: &[raster::Coverage], color: u32, opacity: f32, drawn: &mut Vec<u32>) {
+    for &(i, c) in cov {
+        let sa = (c as f32 * opacity + 0.5) as u32;
+        if sa == 0 {
+            continue;
+        }
+        let d = px[i as usize];
+        let inv = 255 - sa;
+        let mix = |shift: u32| {
+            let s = (((color >> shift) & 0xFF) * sa + 127) / 255;
+            (s + (((d >> shift) & 0xFF) * inv + 127) / 255).min(255)
+        };
+        let a = (sa + (((d >> 24) & 0xFF) * inv + 127) / 255).min(255);
+        px[i as usize] = (a << 24) | (mix(16) << 16) | (mix(8) << 8) | mix(0);
+        drawn.push(i);
+    }
+}
+
+/// White ring around the pivot dot, in pixels.
+pub(crate) const DOT_RING: f64 = 2.0;
+/// Dark outline outside the white ring, in pixels.
+pub(crate) const DOT_OUTLINE: f64 = 1.5;
+
+/// Full diameter of the pivot dot including its rings.
+pub(crate) fn dot_extent(style: &Style) -> f64 {
+    style.dot_diameter + 2.0 * (DOT_RING + DOT_OUTLINE)
+}
+
+/// Paints the pivot dot: a dark outline, a white ring and the line color in
+/// the middle, so it stands out on both light and dark images.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_dot(
+    px: &mut [u32],
+    w: i32,
+    h: i32,
+    cx: f64,
+    cy: f64,
+    style: &Style,
+    scratch: &mut Vec<raster::Coverage>,
+    drawn: &mut Vec<u32>,
+) {
+    let d = style.dot_diameter;
+    let layers = [
+        (dot_extent(style), 0x000000, 0.65),
+        (d + 2.0 * DOT_RING, 0xFFFFFF, 1.0),
+        (d, style.color, 1.0),
+    ];
+    for (diameter, color, opacity) in layers {
+        scratch.clear();
+        raster::dot_pixels(w, h, cx, cy, diameter, scratch);
+        composite(px, scratch, color, opacity, drawn);
+    }
 }
 
 /// A line to draw, in this overlay's local pixel coordinates.
@@ -163,10 +211,6 @@ impl Overlay {
         self.strips[0]
     }
 
-    fn pixels(&mut self) -> &mut [u32] {
-        unsafe { std::slice::from_raw_parts_mut(self.bits, (self.w * self.h) as usize) }
-    }
-
     pub fn bring_to_top(&self) {
         for &s in &self.strips {
             unsafe {
@@ -191,45 +235,62 @@ impl Overlay {
     }
 
     /// Redraws the overlay with the given lines and pushes the changed areas.
+    ///
+    /// Shapes are composited back to front, each in its own color: angle
+    /// bisectors, dashed crosses, the main lines, then the active pivot dot.
     pub fn draw(&mut self, lines: &[LineSpec], bisectors: &[BisectorSpec], style: &Style) {
         let (w, h) = (self.w, self.h);
-
-        let mut new = std::mem::take(&mut self.scratch);
-        new.clear();
-        for b in bisectors {
-            raster::line_pixels(w, h, b.cx, b.cy, b.angle, style.line_width, Some(&BISECTOR_DOTS), &mut new);
-        }
-        for l in lines {
-            let (cx, cy) = raster::shape_center(l.px, l.py, style.line_width);
-            raster::line_pixels(w, h, cx, cy, l.angle, style.line_width, None, &mut new);
-            if l.cross && style.show_cross {
-                for d in [FRAC_PI_4, -FRAC_PI_4] {
-                    raster::line_pixels(w, h, cx, cy, l.angle + d, style.cross_width, Some(&style.dash), &mut new);
-                }
-            }
-            if l.dot {
-                raster::dot_pixels(w, h, cx, cy, style.dot_diameter, &mut new);
-            }
-        }
-
         let bg = self.bg;
-        let mut drawn = std::mem::take(&mut self.drawn);
         let full = self.needs_full;
+        // SAFETY: `bits` points to the w*h DIB owned by this overlay.
+        let px = unsafe { std::slice::from_raw_parts_mut(self.bits, (w * h) as usize) };
+
+        // Erase what the previous frame drew.
+        let old = std::mem::take(&mut self.drawn);
         if full {
-            self.pixels().fill(bg);
+            px.fill(bg);
         } else {
-            if drawn.is_empty() && new.is_empty() {
-                self.scratch = new;
-                return;
-            }
-            let px = self.pixels();
-            for &i in &drawn {
+            for &i in &old {
                 px[i as usize] = bg;
             }
+        }
+
+        let mut drawn = Vec::with_capacity(old.len());
+        let mut scratch = std::mem::take(&mut self.scratch);
+        for b in bisectors {
+            scratch.clear();
+            raster::line_pixels(w, h, b.cx, b.cy, b.angle, style.line_width, Some(&BISECTOR_DOTS), &mut scratch);
+            composite(px, &scratch, style.bisector_color, 1.0, &mut drawn);
+        }
+        let centers: Vec<(f64, f64)> =
+            lines.iter().map(|l| raster::shape_center(l.px, l.py, style.line_width)).collect();
+        if style.show_cross {
+            for (l, &(cx, cy)) in lines.iter().zip(&centers).filter(|(l, _)| l.cross) {
+                scratch.clear();
+                for d in [FRAC_PI_4, -FRAC_PI_4] {
+                    raster::line_pixels(w, h, cx, cy, l.angle + d, style.cross_width, Some(&style.dash), &mut scratch);
+                }
+                composite(px, &scratch, style.cross_color, 1.0, &mut drawn);
+            }
+        }
+        for (l, &(cx, cy)) in lines.iter().zip(&centers) {
+            scratch.clear();
+            raster::line_pixels(w, h, cx, cy, l.angle, style.line_width, None, &mut scratch);
+            composite(px, &scratch, style.color, 1.0, &mut drawn);
+        }
+        for (_, &(cx, cy)) in lines.iter().zip(&centers).filter(|(l, _)| l.dot) {
+            paint_dot(px, w, h, cx, cy, style, &mut scratch, &mut drawn);
+        }
+        self.scratch = scratch;
+
+        if !full && old.is_empty() && drawn.is_empty() {
+            return;
+        }
+        if !full {
             self.dirty.iter_mut().for_each(|d| *d = None);
-            let (w, dirty) = (w as u32, &mut self.dirty);
-            for i in drawn.iter().copied().chain(new.iter().map(|c| c.0)) {
-                let (x, y) = ((i % w) as i32, (i / w) as i32);
+            let (wu, dirty) = (w as u32, &mut self.dirty);
+            for i in old.iter().chain(drawn.iter()).copied() {
+                let (x, y) = ((i % wu) as i32, (i / wu) as i32);
                 let s = (y / STRIP_HEIGHT) as usize;
                 let ly = y - s as i32 * STRIP_HEIGHT;
                 let r = dirty[s].get_or_insert(RECT { left: x, top: ly, right: x + 1, bottom: ly + 1 });
@@ -239,22 +300,7 @@ impl Overlay {
                 r.bottom = r.bottom.max(ly + 1);
             }
         }
-
-        // Overlapping shapes keep the strongest coverage per pixel.
-        let bg_alpha = (bg >> 24) as u8;
-        {
-            let px = self.pixels();
-            for &(i, a) in &new {
-                let cur = px[i as usize];
-                if a > (cur >> 24) as u8 {
-                    px[i as usize] = ink(a, bg_alpha, style.color);
-                }
-            }
-        }
-        drawn.clear();
-        drawn.extend(new.iter().map(|c| c.0));
         self.drawn = drawn;
-        self.scratch = new;
         self.needs_full = false;
 
         for s in 0..self.strips.len() {
