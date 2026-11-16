@@ -11,9 +11,14 @@ lock it in place, and keep working in any app underneath.
 - **Always ready** – sits in the notification area; one global hotkey (default **Ctrl+Shift+X**).
 - **Follows the mouse** – the line tracks the cursor vertically, the pivot dot tracks it horizontally.
   The cursor is hidden while placing so nothing covers the image.
-- **Rotation** – hold the **right mouse button** and move the mouse up/down to rotate around the dot
-  (**Shift** = fine, **Ctrl** = snap to 15° steps). Release to lock.
+- **Knob-style rotation** – hold the **right mouse button** and move the mouse in any direction,
+  like a knob in music software: right/up turns clockwise, left/down counter-clockwise
+  (**Shift** = fine, **Ctrl** = snap to 15° steps).
+- **Move after rotating** – after releasing the right button the line keeps its angle and still
+  follows the mouse; rotate again or **left-click to lock** it.
 - **Dashed X guide** – a dashed cross at ±45° through the pivot while placing.
+- **Angle bisector** – with two or more lines, each new line gets a dotted bisector of the acute
+  angle it forms with the previous line (skipped for parallel and 90° lines).
 - **Click-through when locked** – locked lines never block clicks or typing in other apps.
 - **Multiple lines** – press the hotkey again to add another line.
 - **Esc removes all lines** from anywhere.
@@ -35,14 +40,15 @@ needs no administrator rights. Windows 10 (1809) or later, x64.
 |---|---|
 | New line | **Ctrl+Shift+X** (or tray menu → *New line*) |
 | Move line / pivot | Move the mouse |
-| Lock without rotating | Left click (the dashed X stays on the line) |
-| Rotate | Hold right button, move mouse up/down; release to lock (the X is removed) |
+| Rotate | Hold right button and move the mouse like a knob (right/up = clockwise); the X is removed |
 | Fine rotation / snap | Hold **Shift** / **Ctrl** while rotating |
+| Move again after rotating | Release the right button and move the mouse |
+| Lock the line | Left click (if it was never rotated, the dashed X stays) |
 | Remove all lines | **Esc** (or tray menu → *Clear all lines*) |
 | Settings | Double-click the tray icon (or tray menu → *Settings…*) |
 
 **Settings** let you change the hotkey, line color, line width, dot size, dashed-cross width and
-dash pattern, rotation speed, snap step, and *Start with Windows*. They are stored in
+dash pattern, the angle bisector, rotation speed, snap step, and *Start with Windows*. They are stored in
 `%APPDATA%\AskeriRuller\settings.ini`.
 
 ## Building from source

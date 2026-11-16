@@ -129,6 +129,27 @@ pub fn dot_pixels(w: i32, h: i32, cx: f64, cy: f64, diameter: f64, out: &mut Vec
     }
 }
 
+/// Lines closer than this to parallel or perpendicular get no bisector.
+pub const BISECTOR_TOLERANCE_DEG: f64 = 0.5;
+
+/// Bisector of the acute angle between two infinite lines given by a point
+/// and an angle each. Returns (intersection x, intersection y, angle).
+///
+/// `None` when the lines are (nearly) parallel — there is no angle — or
+/// (nearly) perpendicular, where both angles are 90° and the bisector would
+/// be ambiguous.
+pub fn bisector(p1: (f64, f64), a1: f64, p2: (f64, f64), a2: f64) -> Option<(f64, f64, f64)> {
+    let delta = normalize_angle(a2 - a1); // (-90°, 90°]: the acute angle, signed
+    let tol = BISECTOR_TOLERANCE_DEG.to_radians();
+    if delta.abs() < tol || (std::f64::consts::FRAC_PI_2 - delta.abs()).abs() < tol {
+        return None;
+    }
+    let (u1, u2) = ((a1.cos(), a1.sin()), (a2.cos(), a2.sin()));
+    let cross = |a: (f64, f64), b: (f64, f64)| a.0 * b.1 - a.1 * b.0;
+    let t = cross((p2.0 - p1.0, p2.1 - p1.1), u2) / cross(u1, u2);
+    Some((p1.0 + t * u1.0, p1.1 + t * u1.1, normalize_angle(a1 + delta / 2.0)))
+}
+
 /// Normalizes an angle to the range (-90°, 90°]. A line is symmetric, so
 /// angles 180° apart describe the same line.
 pub fn normalize_angle(a: f64) -> f64 {
@@ -244,6 +265,34 @@ mod tests {
         let mut v = Vec::new();
         dot_pixels(10, 10, 0.0, 0.0, 8.0, &mut v);
         assert!(v.iter().all(|&(i, _)| i < 100));
+    }
+
+    #[test]
+    fn bisector_of_acute_angle() {
+        let deg = |d: f64| d.to_radians();
+        // Horizontal through (0,0) and 60° through (10,0): meet at (10,0), bisector 30°.
+        let (x, y, a) = bisector((0.0, 0.0), 0.0, (10.0, 0.0), deg(60.0)).unwrap();
+        assert!((x - 10.0).abs() < 1e-9 && y.abs() < 1e-9);
+        assert!((a - deg(30.0)).abs() < 1e-9);
+        // 0° and 120° form a 60° acute angle on the other side: bisector at -30°.
+        let (_, _, a) = bisector((0.0, 0.0), 0.0, (0.0, 0.0), deg(120.0)).unwrap();
+        assert!((a - deg(-30.0)).abs() < 1e-9);
+        // Order of the lines does not matter.
+        let (_, _, a) = bisector((0.0, 0.0), deg(120.0), (0.0, 0.0), 0.0).unwrap();
+        assert!((normalize_angle(a - deg(-30.0))).abs() < 1e-9);
+        // Intersection away from both pivots.
+        let (x, y, _) = bisector((0.0, 0.0), deg(30.0), (10.0, 0.0), deg(-30.0)).unwrap();
+        assert!((x - 5.0).abs() < 1e-9 && (y - 5.0 * deg(30.0).tan()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn no_bisector_for_parallel_or_perpendicular() {
+        let deg = |d: f64| d.to_radians();
+        assert!(bisector((0.0, 0.0), deg(10.0), (5.0, 5.0), deg(10.0)).is_none());
+        assert!(bisector((0.0, 0.0), deg(10.0), (5.0, 5.0), deg(190.2)).is_none());
+        assert!(bisector((0.0, 0.0), 0.0, (5.0, 5.0), deg(90.0)).is_none());
+        assert!(bisector((0.0, 0.0), deg(20.0), (5.0, 5.0), deg(-70.3)).is_none());
+        assert!(bisector((0.0, 0.0), 0.0, (5.0, 5.0), deg(89.0)).is_some());
     }
 
     #[test]

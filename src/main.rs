@@ -38,12 +38,13 @@ const DISPLAY_SETTLE_MS: u32 = 600;
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
-    /// Last absolute raw-mouse Y (remote desktop / tablets report absolute).
-    static RAW_ABS_Y: Cell<Option<i32>> = const { Cell::new(None) };
+    /// Last absolute raw-mouse position in pixels (remote desktop and tablets
+    /// report absolute coordinates instead of deltas).
+    static RAW_ABS: Cell<Option<(i32, i32)>> = const { Cell::new(None) };
 }
 
 pub fn reset_raw_abs() {
-    RAW_ABS_Y.with(|c| c.set(None));
+    RAW_ABS.with(|c| c.set(None));
 }
 
 fn main() {
@@ -255,11 +256,15 @@ unsafe fn read_raw_mouse(h: HRAWINPUT) {
         // Absolute coordinates are normalized to 0..65535 across the screen
         // (or the virtual desktop). Convert to pixels and diff.
         let virtual_desk = (m.usFlags as u32 & MOUSE_VIRTUAL_DESKTOP as u32) != 0;
-        let h_px = GetSystemMetrics(if virtual_desk { SM_CYVIRTUALSCREEN } else { SM_CYSCREEN });
+        let (w_px, h_px) = if virtual_desk {
+            (GetSystemMetrics(SM_CXVIRTUALSCREEN), GetSystemMetrics(SM_CYVIRTUALSCREEN))
+        } else {
+            (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
+        };
+        let x = (m.lLastX as i64 * w_px as i64 / 65535) as i32;
         let y = (m.lLastY as i64 * h_px as i64 / 65535) as i32;
-        let prev = RAW_ABS_Y.with(|c| c.replace(Some(y)));
-        if let Some(prev) = prev {
-            push(Event::RawMouseDelta { dx: 0, dy: y - prev });
+        if let Some((px, py)) = RAW_ABS.with(|c| c.replace(Some((x, y)))) {
+            push(Event::RawMouseDelta { dx: x - px, dy: y - py });
         }
     }
 }

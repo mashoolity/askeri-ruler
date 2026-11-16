@@ -1,10 +1,15 @@
 //! Application state machine.
 //!
-//! Idle ──hotkey──▶ Placing ──RMB down──▶ Rotating ──RMB up──▶ Locked
-//!                    │  └──LMB down (lock without rotating)───▶ Locked
+//! Idle ──hotkey──▶ Placing ◀──RMB up── Rotating
+//!                    │  └────RMB down────▶ ┘
+//!                    ├──LMB down──▶ Locked
 //!                    └──ESC──▶ Idle (all lines removed)
 //! Locked ──hotkey──▶ Placing a new line (existing lines stay)
 //! Locked ──ESC──▶ Idle (all lines removed)
+//!
+//! While placing, the line follows the mouse at its current angle, so it can
+//! be rotated (RMB held, mouse moved like a knob), moved again, rotated again,
+//! and finally locked with a left click.
 
 use std::ptr::null_mut;
 
@@ -17,8 +22,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 use crate::autostart;
 use crate::events::Event;
 use crate::hook::{self, KeyboardHook};
-use crate::overlay::{LineSpec, Overlay};
-use crate::raster::normalize_angle;
+use crate::overlay::{BisectorSpec, LineSpec, Overlay};
+use crate::raster::{self, normalize_angle};
 use crate::settings::{Settings, FINE_DIVISOR};
 use crate::settings_ui::{self, SettingsWindow};
 use crate::tray::{self, Tray};
@@ -120,11 +125,14 @@ impl App {
             }
             Event::RightDown => self.begin_rotate(),
             Event::RightUp | Event::CaptureLost => {
+                // Stop rotating; the line keeps its angle and follows the
+                // mouse again until a left click locks it.
                 if matches!(&self.active, Some(a) if a.rotating) {
-                    self.lock();
+                    self.end_rotate();
+                    self.dirty = true;
                 }
             }
-            Event::RawMouseDelta { dy, .. } => self.rotate_by(dy),
+            Event::RawMouseDelta { dx, dy } => self.rotate_by(dx, dy),
             Event::EscapePressed => self.clear_all(),
             Event::EscapeReleased => self.update_hook(),
             Event::TrayMenu => self.tray_menu(),
@@ -231,16 +239,19 @@ impl App {
         register_raw_mouse(self.main_hwnd, true);
     }
 
-    fn rotate_by(&mut self, dy: i32) {
+    /// Knob-style rotation: moving the mouse right or up turns the line
+    /// clockwise, left or down turns it counter-clockwise.
+    fn rotate_by(&mut self, dx: i32, dy: i32) {
         let Some(a) = &mut self.active else { return };
-        if !a.rotating || dy == 0 {
+        let turn = knob_delta(dx, dy);
+        if !a.rotating || turn == 0 {
             return;
         }
         let mut deg_per_px = self.settings.rotation_speed as f64 / 100.0;
         if key_down(VK_SHIFT) {
             deg_per_px /= FINE_DIVISOR;
         }
-        a.raw_angle = normalize_angle(a.raw_angle + (dy as f64 * deg_per_px).to_radians());
+        a.raw_angle = normalize_angle(a.raw_angle + (turn as f64 * deg_per_px).to_radians());
         a.line.angle = if key_down(VK_CONTROL) {
             let s = (self.settings.snap_step as f64).to_radians();
             normalize_angle((a.raw_angle / s).round() * s)
@@ -295,9 +306,7 @@ impl App {
         if self.overlays.is_empty() {
             return;
         }
-        if matches!(&self.active, Some(a) if a.rotating) {
-            self.lock();
-        }
+        self.end_rotate();
         let old = std::mem::take(&mut self.monitors);
         let new = monitor_list();
         self.lines.retain_mut(|l| {
@@ -443,24 +452,43 @@ impl App {
         }
         self.dirty = false;
         let style = self.settings.style();
+        // All lines in creation order; the active one (with its dot) is last.
+        let locked = self.lines.iter().map(|l| (l, false));
+        let active = self.active.as_ref().map(|a| (&a.line, true));
+        let all: Vec<(&Line, bool)> = locked.chain(active).collect();
+
         let mut specs = Vec::new();
+        let mut bisectors = Vec::new();
         for ov in &mut self.overlays {
             specs.clear();
+            bisectors.clear();
             let r = ov.rect;
-            let locked = self.lines.iter().map(|l| (l, false));
-            let active = self.active.as_ref().map(|a| (&a.line, true));
-            for (l, dot) in locked.chain(active) {
-                if contains(&r, l.px as i32, l.py as i32) {
-                    specs.push(LineSpec {
-                        px: l.px - r.left as f64,
-                        py: l.py - r.top as f64,
-                        angle: l.angle,
-                        dot,
-                        cross: l.cross,
-                    });
+            let on_this = |l: &Line| contains(&r, l.px as i32, l.py as i32);
+            let local = |l: &Line| (l.px - r.left as f64, l.py - r.top as f64);
+            for &(l, dot) in &all {
+                if on_this(l) {
+                    let (px, py) = local(l);
+                    specs.push(LineSpec { px, py, angle: l.angle, dot, cross: l.cross });
                 }
             }
-            ov.draw(&specs, &style);
+            // Each new line gets a dotted bisector of its acute angle with the
+            // previous line (when both are on this monitor).
+            if style.show_bisector {
+                for pair in all.windows(2) {
+                    let (a, b) = (pair[0].0, pair[1].0);
+                    if !(on_this(a) && on_this(b)) {
+                        continue;
+                    }
+                    let (ax, ay) = local(a);
+                    let (bx, by) = local(b);
+                    let ca = raster::shape_center(ax, ay, style.line_width);
+                    let cb = raster::shape_center(bx, by, style.line_width);
+                    if let Some((cx, cy, angle)) = raster::bisector(ca, a.angle, cb, b.angle) {
+                        bisectors.push(BisectorSpec { cx, cy, angle });
+                    }
+                }
+            }
+            ov.draw(&specs, &bisectors, &style);
         }
     }
 }
@@ -469,6 +497,13 @@ impl Drop for App {
     fn drop(&mut self) {
         self.unregister_hotkey();
     }
+}
+
+/// Knob mapping of a mouse movement to a rotation amount in pixels.
+/// Positive = clockwise on screen (y points down): right and up turn
+/// clockwise, like dragging a knob in music software.
+fn knob_delta(dx: i32, dy: i32) -> i32 {
+    dx - dy
 }
 
 fn tip(s: &Settings) -> String {

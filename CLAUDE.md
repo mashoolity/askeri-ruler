@@ -39,8 +39,12 @@ See RELEASING.md. Signing is optional via a `SIGN_COMMAND` containing `{file}`.
   then renders at most once (`render_if_dirty`). This avoids Win32 re-entrancy (many APIs call
   window procs synchronously) and coalesces 1000 Hz raw mouse input into one redraw per batch.
   Keep it this way: never borrow/modify `App` from a window proc.
-- **State machine** (`app.rs`): Idle → Placing (hotkey) → Rotating (RMB down) → Locked (RMB up or
-  LMB). Hotkey while locked adds another line. Esc clears everything.
+- **State machine** (`app.rs`): Idle → Placing (hotkey) ⇄ Rotating (RMB down / RMB up) → Locked
+  (LMB). After rotating, the line keeps its angle and follows the mouse again until a left click.
+  Hotkey while locked adds another line. Esc clears everything.
+- **Bisectors**: `App::render_if_dirty` pairs consecutive lines (creation order, active last) on
+  the same monitor and draws the dotted acute-angle bisector from `raster::bisector`
+  (none for parallel or 90° lines, ±0.5°).
 - **Overlays** (`overlay.rs`): one per monitor, each a premultiplied-BGRA DIB shown through a
   stack of 96 px-high layered *strip* windows updated with `UpdateLayeredWindowIndirect` and
   per-strip dirty rects. Layered-window cost scales with dirty area; a full-screen diagonal
@@ -50,7 +54,7 @@ See RELEASING.md. Signing is optional via a `SIGN_COMMAND` containing `{file}`.
 - **Coordinates are physical pixels** (PerMonitorV2 via manifest + API). Lines store pivots in
   virtual-screen coords; on display change they're remapped by monitor device name.
 - **Rotation** uses raw input deltas (`RIDEV_INPUTSINK`) with the hidden cursor clipped to the
-  pivot. Absolute raw input (RDP/tablets) is converted to deltas in `main::read_raw_mouse`.
+  pivot, mapped knob-style by `knob_delta` (dx − dy: right/up = clockwise). Absolute raw input (RDP/tablets) is converted to deltas in `main::read_raw_mouse`.
 - **Esc hook** (`hook.rs`): `WH_KEYBOARD_LL`, installed only while lines exist (or Esc is held),
   swallows Esc down *and* the matching up.
 - **Settings window** (`settings_ui.rs`): plain Win32 controls laid out in 96-DPI units and
@@ -83,7 +87,11 @@ See RELEASING.md. Signing is optional via a `SIGN_COMMAND` containing `{file}`.
 - Line: anti-aliased, default 2 px red; round pivot dot (default 10 px) shown only while
   placing/rotating.
 - Dashed X at ±45° shows while placing; removed once RMB rotation starts; kept if the line is
-  locked by left click.
+  locked by left click without ever rotating.
+- Rotation is knob-style (any mouse direction; right/up = clockwise) — testers found up/down only
+  confusing. Releasing RMB does **not** lock; only a left click locks.
+- Each new line gets a dotted bisector of the acute angle with the previous line; skipped at 90°
+  and when parallel. Toggle in settings (`show_bisector`, default on).
 - Esc removes **all** lines and is swallowed (other apps never see it).
 - Hotkey while a line is locked **adds** a new line.
 - No "hide from screenshots" option (explicitly declined).

@@ -57,8 +57,9 @@ Optional local check with the Windows App Certification Kit (run as administrato
 ### Notes for certification
 
 > The app runs in the notification area (tray icon). Press Ctrl+Shift+X to show a red guide line that
-> follows the mouse. Hold the right mouse button and move the mouse up/down to rotate it; release to
-> lock it in place (the line then lets clicks through to other apps). Press Esc to remove all lines.
+> follows the mouse. Hold the right mouse button and move the mouse to rotate it; release, move it
+> if needed, and left-click to lock it in place (the line then lets clicks through to other apps).
+> Press Esc to remove all lines.
 > Right-click the tray icon for Settings and Exit. While lines are visible, the app uses a low-level
 > keyboard hook solely to detect the Esc key; no input is stored or transmitted, and the app makes no
 > network connections.

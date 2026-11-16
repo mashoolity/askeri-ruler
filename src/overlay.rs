@@ -51,9 +51,20 @@ pub struct LineSpec {
     pub py: f64,
     pub angle: f64,
     pub dot: bool,
-    /// Dashed X through the pivot at Â±45Â° to the line.
+    /// Dashed X through the pivot at ±45° to the line.
     pub cross: bool,
 }
+
+/// A dotted angle bisector: an infinite line through (`cx`, `cy`) in this
+/// overlay's local pixel coordinates (already a shape center, not a pivot).
+pub struct BisectorSpec {
+    pub cx: f64,
+    pub cy: f64,
+    pub angle: f64,
+}
+
+/// Dot pattern of the bisector (distinct from the dashed X).
+const BISECTOR_DOTS: raster::Dash = raster::Dash { on: 2.0, off: 4.0, start: 0.0 };
 
 pub struct Overlay {
     pub rect: RECT,
@@ -138,7 +149,7 @@ impl Overlay {
                 }
                 ov.strips.push(hwnd);
             }
-            ov.draw(&[], &crate::settings::Settings::default().style());
+            ov.draw(&[], &[], &crate::settings::Settings::default().style());
             for &s in &ov.strips {
                 ShowWindow(s, SW_SHOWNOACTIVATE);
             }
@@ -180,11 +191,14 @@ impl Overlay {
     }
 
     /// Redraws the overlay with the given lines and pushes the changed areas.
-    pub fn draw(&mut self, lines: &[LineSpec], style: &Style) {
+    pub fn draw(&mut self, lines: &[LineSpec], bisectors: &[BisectorSpec], style: &Style) {
         let (w, h) = (self.w, self.h);
 
         let mut new = std::mem::take(&mut self.scratch);
         new.clear();
+        for b in bisectors {
+            raster::line_pixels(w, h, b.cx, b.cy, b.angle, style.line_width, Some(&BISECTOR_DOTS), &mut new);
+        }
         for l in lines {
             let (cx, cy) = raster::shape_center(l.px, l.py, style.line_width);
             raster::line_pixels(w, h, cx, cy, l.angle, style.line_width, None, &mut new);

@@ -21,7 +21,9 @@ pub struct Settings {
     pub cross_width: u32,
     pub dash_length: u32,
     pub dash_gap: u32,
-    /// Degrees of rotation per 100 px of vertical mouse movement.
+    /// Dotted bisector of the acute angle between each line and the previous one.
+    pub show_bisector: bool,
+    /// Degrees of rotation per 100 px of mouse movement.
     pub rotation_speed: u32,
     /// Ctrl-snap step in degrees.
     pub snap_step: u32,
@@ -50,6 +52,7 @@ impl Default for Settings {
             cross_width: 2,
             dash_length: 6,
             dash_gap: 6,
+            show_bisector: true,
             rotation_speed: 10,
             snap_step: 15,
         }
@@ -65,6 +68,7 @@ pub struct Style {
     pub show_cross: bool,
     pub cross_width: f64,
     pub dash: Dash,
+    pub show_bisector: bool,
 }
 
 impl Settings {
@@ -82,6 +86,7 @@ impl Settings {
                 // Leave a little room around the dot.
                 start: dot / 2.0 + 4.0,
             },
+            show_bisector: self.show_bisector,
         }
     }
 
@@ -120,6 +125,7 @@ impl Settings {
              cross_width = {}\n\
              dash_length = {}\n\
              dash_gap = {}\n\
+             show_bisector = {}\n\
              rotation_speed = {}\n\
              snap_step = {}\n",
             self.hotkey_mods,
@@ -131,6 +137,7 @@ impl Settings {
             self.cross_width,
             self.dash_length,
             self.dash_gap,
+            self.show_bisector,
             self.rotation_speed,
             self.snap_step,
         )
@@ -161,6 +168,7 @@ impl Settings {
                 "cross_width" => s.cross_width = num(s.cross_width),
                 "dash_length" => s.dash_length = num(s.dash_length),
                 "dash_gap" => s.dash_gap = num(s.dash_gap),
+                "show_bisector" => s.show_bisector = v.eq_ignore_ascii_case("true") || v == "1",
                 "rotation_speed" => s.rotation_speed = num(s.rotation_speed),
                 "snap_step" => s.snap_step = num(s.snap_step),
                 _ => {}
@@ -242,6 +250,7 @@ mod tests {
             color: 0x12AB34,
             line_width: 3,
             show_cross: false,
+            show_bisector: false,
             hotkey_mods: MOD_ALT,
             hotkey_vk: 0x71,
             ..Settings::default()

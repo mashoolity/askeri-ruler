@@ -34,6 +34,7 @@ pub const ID_ROT: u16 = 110;
 pub const ID_SNAP: u16 = 111;
 pub const ID_AUTOSTART: u16 = 112;
 pub const ID_RESET: u16 = 113;
+pub const ID_BISECTOR: u16 = 114;
 
 /// Numeric fields: id, label, valid range.
 const NUMS: [(u16, &str, (u32, u32)); 7] = [
@@ -261,6 +262,16 @@ impl SettingsWindow {
 
         self.add(
             "BUTTON",
+            "Show angle bisector between lines",
+            WS_TABSTOP | BS_AUTOCHECKBOX as u32,
+            0,
+            ID_BISECTOR,
+            (MARGIN, row_y(row), CLIENT_W - 2 * MARGIN, CTRL_H),
+        );
+        row += 1;
+
+        self.add(
+            "BUTTON",
             "Start with Windows",
             WS_TABSTOP | BS_AUTOCHECKBOX as u32,
             0,
@@ -271,13 +282,14 @@ impl SettingsWindow {
 
         self.add(
             "STATIC",
-            "While rotating: hold Shift for fine control, Ctrl to snap.",
+            "Rotate: hold the right button and move the mouse like a knob\n\
+             (right/up = clockwise). Shift = fine, Ctrl = snap.",
             0 /* SS_LEFT */,
             0,
             0xFFFF,
-            (MARGIN, row_y(row) + 4, CLIENT_W - 2 * MARGIN, CTRL_H),
+            (MARGIN, row_y(row) + 4, CLIENT_W - 2 * MARGIN, ROW + CTRL_H - 4),
         );
-        row += 1;
+        row += 2;
 
         let by = row_y(row) + 8;
         self.add(
@@ -307,8 +319,9 @@ impl SettingsWindow {
     }
 
     fn client_height() -> i32 {
-        // Rows: hotkey, color, 7 numbers, cross checkbox, autostart, hint.
-        row_y(12) + 8 + BTN_H + MARGIN
+        // Rows: hotkey, color, 7 numbers, cross checkbox, bisector checkbox,
+        // autostart, two-line hint.
+        row_y(14) + 8 + BTN_H + MARGIN
     }
 
     fn ctl(&self, id: u16) -> Option<HWND> {
@@ -411,6 +424,7 @@ impl SettingsWindow {
                 SendMessageW(ud, UDM_SETPOS32, 0, num_get(s, id) as LPARAM);
             }
             self.set_check(ID_CROSS, s.show_cross);
+            self.set_check(ID_BISECTOR, s.show_bisector);
             self.set_check(ID_AUTOSTART, autostart);
         }
         self.set_color(s.color);
@@ -519,6 +533,7 @@ impl SettingsWindow {
         }
         s.color = self.color;
         s.show_cross = self.checked(ID_CROSS);
+        s.show_bisector = self.checked(ID_BISECTOR);
         Ok((s, self.checked(ID_AUTOSTART)))
     }
 
