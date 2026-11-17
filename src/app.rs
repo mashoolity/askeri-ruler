@@ -52,11 +52,17 @@ struct Active {
     raw_angle: f64,
 }
 
-/// A locked line being dragged by its dot.
+/// A locked line being adjusted through its dot.
 struct Drag {
     id: u32,
-    /// Pivot minus cursor at the moment the drag started (no jump on grab).
-    offset: (f64, f64),
+    mode: DragMode,
+}
+
+enum DragMode {
+    /// Left-drag: move. Pivot minus cursor when the drag started (no jump on grab).
+    Move { offset: (f64, f64) },
+    /// Right-drag: rotate around the pivot. Accumulated angle before Ctrl-snapping.
+    Rotate { raw_angle: f64 },
 }
 
 #[derive(Clone)]
@@ -163,7 +169,18 @@ impl App {
             Event::RawMouseDelta { dx, dy } => self.rotate_by(dx, dy),
             Event::HandleDown(id) => self.begin_drag(id),
             Event::HandleDrag => self.drag(),
-            Event::HandleUp => self.end_drag(),
+            Event::HandleUp => {
+                if matches!(&self.dragging, Some(Drag { mode: DragMode::Move { .. }, .. })) {
+                    self.end_drag();
+                }
+            }
+            Event::HandleRotateDown(id) => self.begin_handle_rotate(id),
+            Event::HandleRotateUp => {
+                if matches!(&self.dragging, Some(Drag { mode: DragMode::Rotate { .. }, .. })) {
+                    self.end_drag();
+                }
+            }
+            Event::HandleCaptureLost => self.end_drag(),
             Event::EscapePressed => self.remove_last(),
             Event::EscapeReleased => self.update_hook(),
             Event::TrayMenu => self.tray_menu(),
@@ -275,25 +292,39 @@ impl App {
     }
 
     /// Knob-style rotation: moving the mouse right or up turns the line
-    /// clockwise, left or down turns it counter-clockwise.
+    /// clockwise, left or down turns it counter-clockwise. Applies to the line
+    /// being placed (RMB held) or a locked line whose dot is right-dragged.
     fn rotate_by(&mut self, dx: i32, dy: i32) {
-        let Some(a) = &mut self.active else { return };
         let turn = knob_delta(dx, dy);
-        if !a.rotating || turn == 0 {
+        if turn == 0 {
             return;
         }
         let mut deg_per_px = self.settings.rotation_speed as f64 / 100.0;
         if key_down(VK_SHIFT) {
             deg_per_px /= FINE_DIVISOR;
         }
-        a.raw_angle = normalize_angle(a.raw_angle + (turn as f64 * deg_per_px).to_radians());
-        a.line.angle = if key_down(VK_CONTROL) {
-            let s = (self.settings.snap_step as f64).to_radians();
-            normalize_angle((a.raw_angle / s).round() * s)
-        } else {
-            a.raw_angle
+        let step = (turn as f64 * deg_per_px).to_radians();
+        let snap = key_down(VK_CONTROL).then(|| (self.settings.snap_step as f64).to_radians());
+        let apply = |raw: &mut f64| -> f64 {
+            *raw = normalize_angle(*raw + step);
+            match snap {
+                Some(s) => normalize_angle((*raw / s).round() * s),
+                None => *raw,
+            }
         };
-        self.dirty = true;
+
+        if let Some(a) = &mut self.active {
+            if a.rotating {
+                a.line.angle = apply(&mut a.raw_angle);
+                self.dirty = true;
+            }
+        } else if let Some(Drag { id, mode: DragMode::Rotate { raw_angle } }) = &mut self.dragging {
+            let angle = apply(raw_angle);
+            if let Some(l) = self.lines.iter_mut().find(|l| l.id == *id) {
+                l.angle = angle;
+                self.dirty = true;
+            }
+        }
     }
 
     fn end_rotate(&mut self) {
@@ -333,7 +364,34 @@ impl App {
         }
         let Some(l) = self.lines.iter().find(|l| l.id == id) else { return };
         let p = cursor_pos();
-        self.dragging = Some(Drag { id, offset: (l.px - p.x as f64, l.py - p.y as f64) });
+        let offset = (l.px - p.x as f64, l.py - p.y as f64);
+        self.dragging = Some(Drag { id, mode: DragMode::Move { offset } });
+        self.capture_handle(id);
+    }
+
+    /// Right button on a locked line's dot: rotate it around its pivot until
+    /// the button is released. The cursor is hidden and pinned to the dot.
+    fn begin_handle_rotate(&mut self, id: u32) {
+        if self.active.is_some() || self.dragging.is_some() {
+            return;
+        }
+        let Some(l) = self.lines.iter_mut().find(|l| l.id == id) else { return };
+        // Same rule as while placing: rotating removes the dashed X.
+        l.cross = false;
+        self.dragging = Some(Drag { id, mode: DragMode::Rotate { raw_angle: l.angle } });
+        self.capture_handle(id);
+        let p = cursor_pos();
+        unsafe {
+            SetCursor(null_mut());
+            let clip = RECT { left: p.x, top: p.y, right: p.x + 1, bottom: p.y + 1 };
+            ClipCursor(&clip);
+        }
+        crate::reset_raw_abs();
+        register_raw_mouse(self.main_hwnd, true);
+        self.dirty = true;
+    }
+
+    fn capture_handle(&self, id: u32) {
         if let Some(h) = self.handles.iter().find(|h| h.id == id) {
             unsafe {
                 SetCapture(h.hwnd);
@@ -342,19 +400,23 @@ impl App {
     }
 
     fn drag(&mut self) {
-        let Some(d) = &self.dragging else { return };
+        let Some(Drag { id, mode: DragMode::Move { offset } }) = &self.dragging else { return };
         let p = cursor_pos();
-        if let Some(l) = self.lines.iter_mut().find(|l| l.id == d.id) {
-            l.px = p.x as f64 + d.offset.0;
-            l.py = p.y as f64 + d.offset.1;
+        if let Some(l) = self.lines.iter_mut().find(|l| l.id == *id) {
+            l.px = p.x as f64 + offset.0;
+            l.py = p.y as f64 + offset.1;
             self.dirty = true;
         }
     }
 
     fn end_drag(&mut self) {
-        if self.dragging.take().is_some() {
+        if let Some(d) = self.dragging.take() {
             unsafe {
-                // Triggers WM_CAPTURECHANGED -> HandleUp, ignored now.
+                if let DragMode::Rotate { .. } = d.mode {
+                    register_raw_mouse(self.main_hwnd, false);
+                    ClipCursor(std::ptr::null());
+                }
+                // Triggers WM_CAPTURECHANGED -> HandleCaptureLost, ignored now.
                 ReleaseCapture();
             }
         }

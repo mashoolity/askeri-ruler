@@ -21,7 +21,8 @@ lock it in place, and keep working in any app underneath.
   bigger (obtuse) angle it forms with the previous line (skipped for parallel and 90° lines).
 - **Click-through when locked** – locked lines never block clicks or typing in other apps; only
   the pivot dot reacts to the mouse.
-- **Drag to reposition** – drag a locked line by its dot to move it; its angle stays the same.
+- **Adjust locked lines from the dot** – left-drag the dot to move the line (angle unchanged);
+  right-drag it to rotate the line knob-style. The line stays locked when you release.
 - **Multiple lines** – press the hotkey again to add another line.
 - **Esc removes the most recent line** from anywhere — press it again for the next one.
 - **Multi-monitor and high-DPI aware**; lines survive resolution and monitor changes.
@@ -47,6 +48,7 @@ needs no administrator rights. Windows 10 (1809) or later, x64.
 | Move again after rotating | Release the right button and move the mouse |
 | Lock the line | Left click (if it was never rotated, the blue dashed X stays) |
 | Move a locked line | Drag its dot with the left button |
+| Rotate a locked line | Drag its dot with the right button (Shift/Ctrl work too) |
 | Remove the last line | **Esc** (once per line) |
 | Remove all lines | Tray menu → *Clear all lines* |
 | Settings | Double-click the tray icon (or tray menu → *Settings…*) |

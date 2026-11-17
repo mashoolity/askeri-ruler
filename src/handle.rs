@@ -6,6 +6,8 @@
 //! exactly the visible dot hit-testable; everything around it stays
 //! click-through. While a new line is being placed, handles are made fully
 //! click-through so they don't steal the overlay's clicks.
+//!
+//! Left-drag on the dot moves the line; right-drag rotates it (knob-style).
 
 use std::ptr::{null, null_mut};
 
@@ -185,8 +187,20 @@ pub unsafe extern "system" fn handle_wndproc(hwnd: HWND, msg: u32, wparam: WPARA
             push(Event::HandleDrag);
             0
         }
-        WM_LBUTTONUP | WM_CAPTURECHANGED => {
+        WM_LBUTTONUP => {
             push(Event::HandleUp);
+            0
+        }
+        WM_RBUTTONDOWN => {
+            push(Event::HandleRotateDown(id));
+            0
+        }
+        WM_RBUTTONUP => {
+            push(Event::HandleRotateUp);
+            0
+        }
+        WM_CAPTURECHANGED => {
+            push(Event::HandleCaptureLost);
             0
         }
         WM_DPICHANGED | WM_CLOSE => 0,
