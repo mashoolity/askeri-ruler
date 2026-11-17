@@ -3,9 +3,9 @@
 //! Idle ──hotkey──▶ Placing ◀──RMB up── Rotating
 //!                    │  └────RMB down────▶ ┘
 //!                    ├──LMB down──▶ Locked
-//!                    └──ESC──▶ Idle (all lines removed)
+//!                    └──ESC──▶ the line being placed is removed
 //! Locked ──hotkey──▶ Placing a new line (existing lines stay)
-//! Locked ──ESC──▶ Idle (all lines removed)
+//! Locked ──ESC──▶ the most recent line is removed (Idle when none are left)
 //!
 //! While placing, the line follows the mouse at its current angle, so it can
 //! be rotated (RMB held, mouse moved like a knob), moved again, rotated again,
@@ -164,7 +164,7 @@ impl App {
             Event::HandleDown(id) => self.begin_drag(id),
             Event::HandleDrag => self.drag(),
             Event::HandleUp => self.end_drag(),
-            Event::EscapePressed => self.clear_all(),
+            Event::EscapePressed => self.remove_last(),
             Event::EscapeReleased => self.update_hook(),
             Event::TrayMenu => self.tray_menu(),
             Event::ShowSettings => self.open_settings(),
@@ -358,6 +358,29 @@ impl App {
                 ReleaseCapture();
             }
         }
+    }
+
+    /// Esc: removes the most recent line — the one being placed, otherwise
+    /// the last locked one. One line per press.
+    fn remove_last(&mut self) {
+        self.end_drag();
+        if self.active.is_some() {
+            self.end_rotate();
+            self.active = None;
+            // The remaining locked lines go back to being click-through.
+            for ov in &mut self.overlays {
+                ov.set_interactive(false);
+            }
+            self.raise_handles = true;
+        } else {
+            self.lines.pop();
+        }
+        if self.lines.is_empty() && self.active.is_none() {
+            self.clear_all();
+            return;
+        }
+        self.dirty = true;
+        self.update_hook();
     }
 
     fn clear_all(&mut self) {

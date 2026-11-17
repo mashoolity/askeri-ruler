@@ -9,7 +9,7 @@
     2. presses the hotkey and checks the cursor's screen row turns red
     3. locks the line with a left click and checks it stays
     4. simulates WM_DISPLAYCHANGE and checks the locked line survives
-    5. presses Esc and checks all lines are gone
+    5. presses Esc and checks the (only) line is gone
   Your settings.ini is backed up and restored. Any running instance is stopped.
   Don't touch the mouse/keyboard while it runs (~5 s).
 
@@ -93,11 +93,11 @@ try {
     Start-Sleep -Milliseconds 1200
     Check 'line survives display change' (((RedInRow $pt.Y) - $base) -gt 500)
 
-    # 5. Esc clears everything (back to the baseline, allowing a little noise).
+    # 5. Esc removes the line (back to the baseline, allowing a little noise).
     Key 0x1B $false; Key 0x1B $true
     Start-Sleep -Milliseconds 400
     $after = (RedInRow $pt.Y) - $base
-    Check "Esc removes all lines (+$after px)" ($after -lt 20)
+    Check "Esc removes the line (+$after px)" ($after -lt 20)
     Check 'app still running' (-not $p.HasExited)
 }
 finally {

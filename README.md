@@ -17,13 +17,13 @@ lock it in place, and keep working in any app underneath.
 - **Move after rotating** – after releasing the right button the line keeps its angle and still
   follows the mouse; rotate again or **left-click to lock** it.
 - **Dashed X guide** – a blue dashed cross at ±45° through the pivot while placing.
-- **Angle bisector** – with two or more lines, each new line gets a green dotted bisector of the acute
-  angle it forms with the previous line (skipped for parallel and 90° lines).
+- **Angle bisector** – with two or more lines, each new line gets a green dotted bisector of the
+  bigger (obtuse) angle it forms with the previous line (skipped for parallel and 90° lines).
 - **Click-through when locked** – locked lines never block clicks or typing in other apps; only
   the pivot dot reacts to the mouse.
 - **Drag to reposition** – drag a locked line by its dot to move it; its angle stays the same.
 - **Multiple lines** – press the hotkey again to add another line.
-- **Esc removes all lines** from anywhere.
+- **Esc removes the most recent line** from anywhere — press it again for the next one.
 - **Multi-monitor and high-DPI aware**; lines survive resolution and monitor changes.
 - **Native and lightweight** – a single ~500 KB Rust executable, no runtime, no network access.
 
@@ -47,7 +47,8 @@ needs no administrator rights. Windows 10 (1809) or later, x64.
 | Move again after rotating | Release the right button and move the mouse |
 | Lock the line | Left click (if it was never rotated, the blue dashed X stays) |
 | Move a locked line | Drag its dot with the left button |
-| Remove all lines | **Esc** (or tray menu → *Clear all lines*) |
+| Remove the last line | **Esc** (once per line) |
+| Remove all lines | Tray menu → *Clear all lines* |
 | Settings | Double-click the tray icon (or tray menu → *Settings…*) |
 
 **Settings** let you change the hotkey, line color, line width, dot size, dashed-cross width and

@@ -84,7 +84,7 @@ impl Tray {
                 return None;
             }
             let new_line = wide(&format!("New line\t{hotkey}"));
-            let clear = wide("Clear all lines\tEsc");
+            let clear = wide("Clear all lines");
             let settings = wide("Settings…");
             let auto = wide("Start with Windows");
             let exit = wide("Exit");

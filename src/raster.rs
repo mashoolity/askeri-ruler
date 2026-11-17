@@ -132,8 +132,8 @@ pub fn dot_pixels(w: i32, h: i32, cx: f64, cy: f64, diameter: f64, out: &mut Vec
 /// Lines closer than this to parallel or perpendicular get no bisector.
 pub const BISECTOR_TOLERANCE_DEG: f64 = 0.5;
 
-/// Bisector of the acute angle between two infinite lines given by a point
-/// and an angle each. Returns (intersection x, intersection y, angle).
+/// Bisector of the obtuse (bigger) angle between two infinite lines given by
+/// a point and an angle each. Returns (intersection x, intersection y, angle).
 ///
 /// `None` when the lines are (nearly) parallel — there is no angle — or
 /// (nearly) perpendicular, where both angles are 90° and the bisector would
@@ -147,7 +147,9 @@ pub fn bisector(p1: (f64, f64), a1: f64, p2: (f64, f64), a2: f64) -> Option<(f64
     let (u1, u2) = ((a1.cos(), a1.sin()), (a2.cos(), a2.sin()));
     let cross = |a: (f64, f64), b: (f64, f64)| a.0 * b.1 - a.1 * b.0;
     let t = cross((p2.0 - p1.0, p2.1 - p1.1), u2) / cross(u1, u2);
-    Some((p1.0 + t * u1.0, p1.1 + t * u1.1, normalize_angle(a1 + delta / 2.0)))
+    // a1 + delta/2 bisects the acute angle; the obtuse bisector is perpendicular to it.
+    let obtuse = a1 + delta / 2.0 + std::f64::consts::FRAC_PI_2;
+    Some((p1.0 + t * u1.0, p1.1 + t * u1.1, normalize_angle(obtuse)))
 }
 
 /// Normalizes an angle to the range (-90°, 90°]. A line is symmetric, so
@@ -268,18 +270,26 @@ mod tests {
     }
 
     #[test]
-    fn bisector_of_acute_angle() {
+    fn bisector_of_obtuse_angle() {
         let deg = |d: f64| d.to_radians();
-        // Horizontal through (0,0) and 60° through (10,0): meet at (10,0), bisector 30°.
+        // Horizontal through (0,0) and 60° through (10,0): meet at (10,0). The
+        // angles are 60° and 120°; the 120° one is bisected at 30° + 90° = 120° ≡ -60°.
         let (x, y, a) = bisector((0.0, 0.0), 0.0, (10.0, 0.0), deg(60.0)).unwrap();
         assert!((x - 10.0).abs() < 1e-9 && y.abs() < 1e-9);
-        assert!((a - deg(30.0)).abs() < 1e-9);
-        // 0° and 120° form a 60° acute angle on the other side: bisector at -30°.
+        assert!((a - deg(-60.0)).abs() < 1e-9);
+        // 0° and 120°: the 120° angle between them is bisected at 60°.
         let (_, _, a) = bisector((0.0, 0.0), 0.0, (0.0, 0.0), deg(120.0)).unwrap();
-        assert!((a - deg(-30.0)).abs() < 1e-9);
+        assert!((a - deg(60.0)).abs() < 1e-9);
         // Order of the lines does not matter.
         let (_, _, a) = bisector((0.0, 0.0), deg(120.0), (0.0, 0.0), 0.0).unwrap();
-        assert!((normalize_angle(a - deg(-30.0))).abs() < 1e-9);
+        assert!((normalize_angle(a - deg(60.0))).abs() < 1e-9);
+        // The bisector makes equal angles (> 45°) with both lines.
+        for (a1, a2) in [(0.0, 30.0), (-20.0, 50.0), (10.0, 95.0)] {
+            let (_, _, b) = bisector((0.0, 0.0), deg(a1), (0.0, 0.0), deg(a2)).unwrap();
+            let d1 = normalize_angle(b - deg(a1)).abs();
+            let d2 = normalize_angle(b - deg(a2)).abs();
+            assert!((d1 - d2).abs() < 1e-9 && d1 > deg(45.0), "{a1} {a2}");
+        }
         // Intersection away from both pivots.
         let (x, y, _) = bisector((0.0, 0.0), deg(30.0), (10.0, 0.0), deg(-30.0)).unwrap();
         assert!((x - 5.0).abs() < 1e-9 && (y - 5.0 * deg(30.0).tan()).abs() < 1e-9);

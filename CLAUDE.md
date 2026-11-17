@@ -41,7 +41,8 @@ See RELEASING.md. Signing is optional via a `SIGN_COMMAND` containing `{file}`.
   Keep it this way: never borrow/modify `App` from a window proc.
 - **State machine** (`app.rs`): Idle → Placing (hotkey) ⇄ Rotating (RMB down / RMB up) → Locked
   (LMB). After rotating, the line keeps its angle and follows the mouse again until a left click.
-  Hotkey while locked adds another line. Esc clears everything.
+  Hotkey while locked adds another line. Esc removes the most recent line (`App::remove_last`:
+  the one being placed, else the last locked one); tray *Clear all lines* removes everything.
 - **Compositing** (`overlay::composite`): shapes are drawn back to front with "over" blending,
   each in its own color: bisectors, X crosses, main lines, active dot (`paint_dot`).
 - **Drag handles** (`handle.rs`): each locked line's dot lives in its own small layered window.
@@ -50,7 +51,7 @@ See RELEASING.md. Signing is optional via a `SIGN_COMMAND` containing `{file}`.
   handles turn `WS_EX_TRANSPARENT` while a new line is being placed. `App::sync_handles` keeps one
   handle per locked line (matched by `Line::id`) and re-raises them above the overlays.
 - **Bisectors**: `App::render_if_dirty` pairs consecutive lines (creation order, active last) on
-  the same monitor and draws the dotted acute-angle bisector from `raster::bisector`
+  the same monitor and draws the dotted obtuse-angle bisector from `raster::bisector`
   (none for parallel or 90° lines, ±0.5°).
 - **Overlays** (`overlay.rs`): one per monitor, each a premultiplied-BGRA DIB shown through a
   stack of 96 px-high layered *strip* windows updated with `UpdateLayeredWindowIndirect` and
@@ -99,9 +100,11 @@ See RELEASING.md. Signing is optional via a `SIGN_COMMAND` containing `{file}`.
   locked by left click without ever rotating.
 - Rotation is knob-style (any mouse direction; right/up = clockwise) — testers found up/down only
   confusing. Releasing RMB does **not** lock; only a left click locks.
-- Each new line gets a dotted bisector of the acute angle with the previous line; skipped at 90°
-  and when parallel. Toggle in settings (`show_bisector`, default on).
-- Esc removes **all** lines and is swallowed (other apps never see it).
+- Each new line gets a dotted bisector of the **bigger (obtuse)** angle with the previous line
+  (changed from acute on request); skipped at 90° and when parallel. Toggle in settings
+  (`show_bisector`, default on).
+- Esc removes **one** line per press, most recent first (changed from "all" on request), and is
+  swallowed (other apps never see it).
 - Hotkey while a line is locked **adds** a new line.
 - No "hide from screenshots" option (explicitly declined).
 - Store listing must not make medical/diagnostic claims (see STORE.md).
