@@ -33,6 +33,8 @@ pub enum Event {
     HandleRotateUp,
     /// A dot handle lost mouse capture: stop whatever it was doing.
     HandleCaptureLost,
+    /// Middle click on a locked line's dot (line id): remove that line.
+    HandleRemove(u32),
     /// Relative mouse movement from raw input (used while rotating).
     RawMouseDelta { dx: i32, dy: i32 },
     /// Our window lost mouse capture unexpectedly.

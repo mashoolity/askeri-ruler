@@ -50,6 +50,7 @@ See RELEASING.md. Signing is optional via a `SIGN_COMMAND` containing `{file}`.
   click-through. `App::dragging` (`DragMode`): LMB down → `SetCapture` → moves update the pivot
   (with the grab offset); RMB down → capture, hide + clip the cursor, raw input → knob rotation via
   the same `rotate_by` as placing (removes the X); release ends either, the line stays locked.
+  Middle click (on button-up, so the app below never gets half a click) → `App::remove_line(id)`.
   Handles turn `WS_EX_TRANSPARENT` while a new line is being placed. `App::sync_handles` keeps one
   handle per locked line (matched by `Line::id`) and re-raises them above the overlays.
 - **Bisectors**: `App::render_if_dirty` pairs consecutive lines (creation order, active last) on
@@ -102,8 +103,8 @@ See RELEASING.md. Signing is optional via a `SIGN_COMMAND` containing `{file}`.
   locked by left click without ever rotating.
 - Rotation is knob-style (any mouse direction; right/up = clockwise) — testers found up/down only
   confusing. Releasing RMB does **not** lock; only a left click locks.
-- Locked lines stay adjustable from their dot: left-drag moves, right-drag rotates; the line stays
-  locked after release.
+- Locked lines stay adjustable from their dot: left-drag moves, right-drag rotates (the line stays
+  locked after release), middle click removes that one line.
 - Each new line gets a dotted bisector of the **bigger (obtuse)** angle with the previous line
   (changed from acute on request); skipped at 90° and when parallel. Toggle in settings
   (`show_bisector`, default on).

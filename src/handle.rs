@@ -7,7 +7,8 @@
 //! click-through. While a new line is being placed, handles are made fully
 //! click-through so they don't steal the overlay's clicks.
 //!
-//! Left-drag on the dot moves the line; right-drag rotates it (knob-style).
+//! Left-drag on the dot moves the line; right-drag rotates it (knob-style);
+//! middle click removes it.
 
 use std::ptr::{null, null_mut};
 
@@ -201,6 +202,14 @@ pub unsafe extern "system" fn handle_wndproc(hwnd: HWND, msg: u32, wparam: WPARA
         }
         WM_CAPTURECHANGED => {
             push(Event::HandleCaptureLost);
+            0
+        }
+        // Middle click removes the line. Act on button-up so the press and
+        // release both land on the dot and the app underneath never sees a
+        // half click; releasing elsewhere cancels.
+        WM_MBUTTONDOWN => 0,
+        WM_MBUTTONUP => {
+            push(Event::HandleRemove(id));
             0
         }
         WM_DPICHANGED | WM_CLOSE => 0,

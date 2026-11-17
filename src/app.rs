@@ -181,6 +181,7 @@ impl App {
                 }
             }
             Event::HandleCaptureLost => self.end_drag(),
+            Event::HandleRemove(id) => self.remove_line(id),
             Event::EscapePressed => self.remove_last(),
             Event::EscapeReleased => self.update_hook(),
             Event::TrayMenu => self.tray_menu(),
@@ -438,6 +439,24 @@ impl App {
             self.lines.pop();
         }
         if self.lines.is_empty() && self.active.is_none() {
+            self.clear_all();
+            return;
+        }
+        self.dirty = true;
+        self.update_hook();
+    }
+
+    /// Middle click on a dot: removes that locked line, wherever it is in
+    /// the stack. Bisectors re-pair the remaining lines in creation order.
+    fn remove_line(&mut self, id: u32) {
+        if self.active.is_some() {
+            return;
+        }
+        if self.dragging.as_ref().is_some_and(|d| d.id == id) {
+            self.end_drag();
+        }
+        self.lines.retain(|l| l.id != id);
+        if self.lines.is_empty() {
             self.clear_all();
             return;
         }
